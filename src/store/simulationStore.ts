@@ -8,18 +8,19 @@ interface SimulationStore {
   events: SimEvent[];
   isRunning: boolean;
 
-  moveAgent: (id: AgentRole, pos: Position) => void;
-  setStatus: (id: AgentRole, status: AgentStatus) => void;
-  setSpeech: (id: AgentRole, speech: string | null) => void;
-  setTask: (id: AgentRole, task: string | null) => void;
-  bumpCompleted: (id: AgentRole) => void;
+  moveAgent:    (id: AgentRole, pos: Position) => void;
+  setStatus:    (id: AgentRole, status: AgentStatus) => void;
+  setSpeech:    (id: AgentRole, speech: string | null) => void;
+  setTask:      (id: AgentRole, task: string | null) => void;
+  bumpCompleted:(id: AgentRole) => void;
 
-  addTask: (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addTask:    (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateTask: (id: string, patch: Partial<SimTask>) => void;
 
   addEvent: (e: Omit<SimEvent, 'id' | 'timestamp'>) => void;
 
-  setRunning: (v: boolean) => void;
+  setRunning:  (v: boolean) => void;
+  resetStore:  () => void;
 }
 
 const buildInitialAgents = (): Record<AgentRole, Agent> =>
@@ -28,20 +29,24 @@ const buildInitialAgents = (): Record<AgentRole, Agent> =>
       cfg.id,
       {
         ...cfg,
-        position: { ...cfg.deskPosition },
-        status: 'idle' as AgentStatus,
-        currentTask: null,
-        speech: null,
+        position:       { ...cfg.deskPosition },
+        status:         'idle' as AgentStatus,
+        currentTask:    null,
+        speech:         null,
         completedTasks: 0,
       },
     ]),
   ) as Record<AgentRole, Agent>;
 
-export const useSimStore = create<SimulationStore>((set) => ({
-  agents: buildInitialAgents(),
-  tasks: [],
-  events: [],
+const INITIAL_STATE = () => ({
+  agents:    buildInitialAgents(),
+  tasks:     [] as SimTask[],
+  events:    [] as SimEvent[],
   isRunning: false,
+});
+
+export const useSimStore = create<SimulationStore>((set) => ({
+  ...INITIAL_STATE(),
 
   moveAgent: (id, pos) =>
     set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], position: pos } } })),
@@ -81,12 +86,17 @@ export const useSimStore = create<SimulationStore>((set) => ({
       events: [
         { ...e, id: uid(), timestamp: Date.now() },
         ...s.events,
-      ].slice(0, 60),
+      ].slice(0, 80),
     })),
 
   setRunning: (isRunning) => set({ isRunning }),
+
+  resetStore: () => set(INITIAL_STATE()),
 }));
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+// Re-export EventType so engine can import from one place
+export type { EventType };

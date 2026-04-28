@@ -1,8 +1,29 @@
 export type AgentRole = 'planner' | 'architect' | 'developer' | 'reviewer' | 'qa';
-export type AgentStatus = 'idle' | 'working' | 'walking' | 'meeting' | 'thinking';
-export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
+
+export type AgentStatus =
+  | 'idle'
+  | 'walking'
+  | 'thinking'
+  | 'coding'
+  | 'reviewing'
+  | 'testing'
+  | 'meeting'
+  | 'blocked';
+
+export type TaskStatus   = 'backlog' | 'in_progress' | 'review' | 'done';
 export type TaskPriority = 'low' | 'medium' | 'high';
-export type EventType = 'task' | 'meeting' | 'chat' | 'system' | 'review';
+export type EventType    = 'task' | 'meeting' | 'chat' | 'system' | 'review';
+
+/** Typed event bus events (mock layer — see eventBus.ts) */
+export type BusEventType =
+  | 'task.created'
+  | 'agent.assigned'
+  | 'agent.moved'
+  | 'agent.status.changed'
+  | 'agent.message'
+  | 'meeting.started'
+  | 'task.completed'
+  | 'issue.found';
 
 export interface Position {
   x: number;

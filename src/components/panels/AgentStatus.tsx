@@ -4,11 +4,14 @@ import { useSimStore } from '@/store/simulationStore';
 import type { AgentStatus } from '@/types';
 
 const STATUS_META: Record<AgentStatus, { icon: string; color: string; label: string }> = {
-  idle:     { icon: '💤', color: '#64748B', label: 'Idle'     },
-  working:  { icon: '⚙️', color: '#60A5FA', label: 'Working'  },
-  walking:  { icon: '🚶', color: '#F97316', label: 'Moving'   },
-  meeting:  { icon: '💬', color: '#34D399', label: 'Meeting'  },
-  thinking: { icon: '🤔', color: '#C084FC', label: 'Thinking' },
+  idle:      { icon: '💤', color: '#64748B', label: 'Idle'      },
+  walking:   { icon: '🚶', color: '#F97316', label: 'Moving'    },
+  thinking:  { icon: '🤔', color: '#C084FC', label: 'Thinking'  },
+  coding:    { icon: '💻', color: '#60A5FA', label: 'Coding'    },
+  reviewing: { icon: '🔍', color: '#34D399', label: 'Reviewing' },
+  testing:   { icon: '🧪', color: '#FB923C', label: 'Testing'   },
+  meeting:   { icon: '💬', color: '#38BDF8', label: 'Meeting'   },
+  blocked:   { icon: '⛔', color: '#EF4444', label: 'Blocked'   },
 };
 
 export default function AgentStatus() {
@@ -29,9 +32,9 @@ export default function AgentStatus() {
                 display:      'flex',
                 alignItems:   'center',
                 gap:          8,
-                background:   '#1E293B',
-                border:       `1px solid ${agent.primaryColor}33`,
-                borderLeft:   `3px solid ${agent.primaryColor}`,
+                background:   agent.status === 'blocked' ? '#2D050580' : '#1E293B',
+                border:       `1px solid ${agent.status === 'blocked' ? '#EF444466' : agent.primaryColor + '33'}`,
+                borderLeft:   `3px solid ${agent.status === 'blocked' ? '#EF4444' : agent.primaryColor}`,
                 borderRadius: 3,
                 padding:      '6px 8px',
               }}
@@ -66,13 +69,13 @@ export default function AgentStatus() {
                 </div>
                 <div
                   style={{
-                    fontSize:   9,
-                    color:      '#475569',
-                    fontFamily: 'monospace',
-                    marginTop:  2,
-                    overflow:   'hidden',
+                    fontSize:     9,
+                    color:        '#475569',
+                    fontFamily:   'monospace',
+                    marginTop:    2,
+                    overflow:     'hidden',
                     textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    whiteSpace:   'nowrap',
                   }}
                 >
                   {agent.currentTask ?? (agent.speech ? `"${agent.speech}"` : '—')}
@@ -83,14 +86,14 @@ export default function AgentStatus() {
               {agent.completedTasks > 0 && (
                 <div
                   style={{
-                    fontSize:       8,
-                    fontFamily:     'monospace',
-                    color:          '#34D399',
-                    background:     '#14261E',
-                    border:         '1px solid #34D39966',
-                    borderRadius:   2,
-                    padding:        '1px 4px',
-                    flexShrink:     0,
+                    fontSize:     8,
+                    fontFamily:   'monospace',
+                    color:        '#34D399',
+                    background:   '#14261E',
+                    border:       '1px solid #34D39966',
+                    borderRadius: 2,
+                    padding:      '1px 4px',
+                    flexShrink:   0,
                   }}
                 >
                   ✓{agent.completedTasks}

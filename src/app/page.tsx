@@ -2,6 +2,7 @@ import OfficeCanvas from '@/components/office/OfficeCanvas';
 import TaskQueue from '@/components/panels/TaskQueue';
 import AgentStatus from '@/components/panels/AgentStatus';
 import EventLog from '@/components/panels/EventLog';
+import CommandCenterPlaceholder from '@/components/command-center/CommandCenterPlaceholder';
 
 export default function Page() {
   return (
@@ -9,7 +10,7 @@ export default function Page() {
       {/* title bar */}
       <header className="app-titlebar">
         <h1>⬛ AI AGENT OFFICE SIMULATOR</h1>
-        <span className="version">v0.1.0-alpha · VISUAL LAYER · MOCK MODE</span>
+        <span className="version">v0.2.0-alpha · VISUAL LAYER · MOCK MODE</span>
       </header>
 
       {/* main body */}
@@ -22,10 +23,11 @@ export default function Page() {
           </div>
         </div>
 
-        {/* right: panels */}
+        {/* right: panels + command center */}
         <div className="side-col">
           <TaskQueue />
           <AgentStatus />
+          <CommandCenterPlaceholder />
         </div>
       </div>
     </div>
