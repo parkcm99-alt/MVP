@@ -15,20 +15,20 @@ export default function Page() {
 
       {/* main body */}
       <div className="app-body">
-        {/* left: office + event log */}
+
+        {/* left: office canvas + event log (EventLog controls own height) */}
         <div className="office-col">
           <OfficeCanvas />
-          <div className="bottom-row">
-            <EventLog />
-          </div>
+          <EventLog />
         </div>
 
-        {/* right: panels + command center */}
+        {/* right: task queue (flex:1) + agent status (fixed) + workflow (fixed) */}
         <div className="side-col">
           <TaskQueue />
           <AgentStatus />
           <CommandCenterPlaceholder />
         </div>
+
       </div>
     </div>
   );

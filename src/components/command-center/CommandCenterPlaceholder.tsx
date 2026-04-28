@@ -3,67 +3,94 @@
 /**
  * CommandCenterPlaceholder — pixel-style agent workflow graph
  *
- * Shows the Planner → Architect → Developer → Reviewer → QA pipeline.
- * Nodes highlight when the corresponding agent is active.
+ * Visualises the Planner → Architect → Developer → Reviewer → QA pipeline.
+ * Active agents highlight their node with their primary colour + glow.
  *
- * TODO: Replace with full React Flow implementation once wired to real LLM.
- * - Nodes:  React Flow <Handle> per role
- * - Edges:  animated dashed arrows showing message passing
- * - State:  AgentOps event stream drives node status colors
+ * TODO: Replace with React Flow when wired to real LLM (Milestone 4).
  */
 
 import { useSimStore } from '@/store/simulationStore';
 import type { AgentRole, AgentStatus } from '@/types';
 
 const PIPELINE: { id: AgentRole; emoji: string; label: string }[] = [
-  { id: 'planner',   emoji: '📋', label: 'Planner'   },
-  { id: 'architect', emoji: '🏗️', label: 'Architect' },
-  { id: 'developer', emoji: '💻', label: 'Dev'        },
-  { id: 'reviewer',  emoji: '🔍', label: 'Reviewer'  },
-  { id: 'qa',        emoji: '🧪', label: 'QA'         },
+  { id: 'planner',   emoji: '📋', label: 'Plan'  },
+  { id: 'architect', emoji: '🏗️', label: 'Arch'  },
+  { id: 'developer', emoji: '💻', label: 'Dev'   },
+  { id: 'reviewer',  emoji: '🔍', label: 'Rev'   },
+  { id: 'qa',        emoji: '🧪', label: 'QA'    },
 ];
 
-const ACTIVE_STATUSES: AgentStatus[] = ['coding', 'reviewing', 'testing', 'thinking', 'meeting'];
+const ACTIVE_STATUSES: AgentStatus[] = [
+  'coding', 'reviewing', 'testing', 'thinking', 'meeting',
+];
 
 export default function CommandCenterPlaceholder() {
   const agents = useSimStore(s => s.agents);
 
   return (
     <div className="cmd-center">
-      <div className="panel-header" style={{ height: 24 }}>
-        <span>⬡ WORKFLOW GRAPH</span>
-        <span className="panel-badge" style={{ fontSize: 8 }}>PLACEHOLDER</span>
+      {/* header */}
+      <div className="panel-header" style={{ height: 26, minHeight: 26 }}>
+        <span>⬡ WORKFLOW</span>
+        <span className="panel-badge" style={{ fontSize: 7 }}>PLACEHOLDER</span>
       </div>
 
+      {/* pipeline flow */}
       <div className="cmd-flow">
         {PIPELINE.map((node, i) => {
-          const agent   = agents[node.id];
+          const agent     = agents[node.id];
           const isActive  = ACTIVE_STATUSES.includes(agent.status);
           const isBlocked = agent.status === 'blocked';
+
+          const borderColor = isBlocked
+            ? '#EF4444'
+            : isActive
+              ? agent.primaryColor
+              : 'var(--border-bright)';
+
+          const bgColor = isBlocked
+            ? '#200505'
+            : isActive
+              ? `${agent.primaryColor}18`
+              : '#0A0F1A';
+
+          const glowShadow = isActive && !isBlocked
+            ? `0 0 7px ${agent.primaryColor}66`
+            : undefined;
 
           return (
             <div key={node.id} style={{ display: 'flex', alignItems: 'center' }}>
               <div className="cmd-node">
                 <div
-                  className={`cmd-node-box ${isActive ? 'active' : ''} ${isBlocked ? 'blocked-node' : ''}`}
-                  style={isActive ? { borderColor: agent.primaryColor, boxShadow: `0 0 6px ${agent.primaryColor}55` } : {}}
+                  className="cmd-node-box"
+                  style={{
+                    borderColor,
+                    background: bgColor,
+                    boxShadow:  glowShadow,
+                  }}
                   title={`${agent.name}: ${agent.status}`}
                 >
-                  <span style={{ fontSize: 14 }}>{node.emoji}</span>
-                  {/* status dot */}
-                  <div
-                    style={{
-                      position:     'absolute',
-                      top:          2,
-                      right:        2,
-                      width:        5,
-                      height:       5,
-                      borderRadius: '50%',
-                      background:   isBlocked ? '#EF4444' : isActive ? agent.primaryColor : '#1E293B',
-                      boxShadow:    isActive && !isBlocked ? `0 0 4px ${agent.primaryColor}` : undefined,
-                    }}
-                  />
+                  <span style={{ fontSize: 13, lineHeight: 1 }}>{node.emoji}</span>
+
+                  {/* status indicator dot */}
+                  <div style={{
+                    position:     'absolute',
+                    top:          2,
+                    right:        2,
+                    width:        5,
+                    height:       5,
+                    borderRadius: '50%',
+                    background:   isBlocked
+                      ? '#EF4444'
+                      : isActive
+                        ? agent.primaryColor
+                        : '#1E293B',
+                    boxShadow: isActive && !isBlocked
+                      ? `0 0 4px ${agent.primaryColor}`
+                      : undefined,
+                  }} />
                 </div>
+
                 <div
                   className="cmd-node-label"
                   style={{ color: isActive ? agent.primaryColor : undefined }}
@@ -73,23 +100,16 @@ export default function CommandCenterPlaceholder() {
               </div>
 
               {i < PIPELINE.length - 1 && (
-                <div className="cmd-arrow">→</div>
+                <div className="cmd-arrow">›</div>
               )}
             </div>
           );
         })}
       </div>
 
-      {/* future hook note */}
-      <div style={{
-        fontSize:    7,
-        color:       '#1E293B',
-        fontFamily:  'monospace',
-        textAlign:   'center',
-        paddingBottom: 6,
-        letterSpacing: 0.5,
-      }}>
-        React Flow · LangGraph · AgentOps — coming soon
+      {/* future integrations hint */}
+      <div className="cmd-footer">
+        React Flow · LangGraph · AgentOps — Milestone 4
       </div>
     </div>
   );

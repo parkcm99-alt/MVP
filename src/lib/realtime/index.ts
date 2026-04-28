@@ -22,15 +22,16 @@ export interface RealtimeChannel {
 }
 
 /** @stub Returns a mock channel that does nothing */
-export function createAgentChannel(_handler: RealtimeHandler): RealtimeChannel {
+export function createAgentChannel(handler: RealtimeHandler): RealtimeChannel {
+  void handler; // stub — supabase.channel('agent-state').on(..., handler) when connected
   return {
     subscribe:   () => { /* connect supabase channel */ },
     unsubscribe: () => { /* disconnect */ },
-    send:        (_payload) => { /* broadcast to peers */ },
+    send:        () => { /* broadcast to peers */ },
   };
 }
 
 /** @stub Persist simulation event to Supabase */
-export async function persistEvent(_payload: RealtimePayload): Promise<void> {
-  // await supabase.from('sim_events').insert(payload.data);
+export async function persistEvent(payload: RealtimePayload): Promise<void> {
+  void payload; // stub — supabase.from('sim_events').insert(payload.data) when connected
 }

@@ -13,18 +13,18 @@
 import type { AgentOpsEvent, AgentRole, WorkflowNode } from '@/types';
 
 /** @stub Send an agent action event to AgentOps */
-export function trackEvent(_event: AgentOpsEvent): void {
-  // agentops.trackEvent(_event);
+export function trackEvent(event: AgentOpsEvent): void {
+  void event; // stub — agentops.trackEvent(event) when connected
 }
 
 /** @stub Start an AgentOps session */
-export function startSession(_sessionId: string): void {
-  // agentops.startSession({ sessionId: _sessionId, tags: ['simulation'] });
+export function startSession(sessionId: string): void {
+  void sessionId; // stub — agentops.startSession({ sessionId, tags: ['simulation'] })
 }
 
 /** @stub End an AgentOps session */
-export function endSession(_sessionId: string): void {
-  // agentops.endSession(_sessionId);
+export function endSession(sessionId: string): void {
+  void sessionId; // stub — agentops.endSession(sessionId)
 }
 
 // ─── React Flow / LangGraph workflow topology ────────────────────────────
@@ -50,6 +50,6 @@ export const WORKFLOW_EDGES = [
 ];
 
 /** Current active node in the workflow (for React Flow highlighting) */
-export function getActiveNode(_agentRole: AgentRole): string {
-  return _agentRole;
+export function getActiveNode(agentRole: AgentRole): string {
+  return agentRole;
 }

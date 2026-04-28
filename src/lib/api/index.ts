@@ -33,11 +33,13 @@ export interface AgentTurnResult {
 }
 
 /** @stub Replace with real Anthropic SDK call */
-export async function runAgentTurn(_params: AgentTurnParams): Promise<AgentTurnResult> {
+export async function runAgentTurn(params: AgentTurnParams): Promise<AgentTurnResult> {
+  void params; // stub — client.messages.create(...) when connected
   throw new Error('Claude API not yet connected. Set ANTHROPIC_API_KEY and implement this function.');
 }
 
 /** @stub Streaming variant */
-export async function* streamAgentTurn(_params: AgentTurnParams): AsyncGenerator<string> {
+export async function* streamAgentTurn(params: AgentTurnParams): AsyncGenerator<string> {
+  void params; // stub — client.messages.stream(...) when connected
   throw new Error('Claude API streaming not yet connected.');
 }

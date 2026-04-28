@@ -18,7 +18,7 @@ export default function AgentStatus() {
   const agents = useSimStore(s => s.agents);
 
   return (
-    <div className="panel">
+    <div className="agent-status-panel">
       <div className="panel-header">
         <span>📊 AGENT STATUS</span>
       </div>
