@@ -67,6 +67,50 @@ npm run build     # 프로덕션 빌드
 
 ---
 
+## Supabase 설정 (선택 — Mock Mode에서는 불필요)
+
+Supabase 없이도 앱은 정상 동작합니다. 실시간 멀티플레이어 및 이벤트 영속화가 필요한 경우:
+
+### 1. 환경변수 설정
+
+```bash
+cp .env.example .env.local
+# .env.local 파일을 열고 아래 값 입력
+```
+
+| 변수 | 위치 | 용도 |
+|------|------|------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (admin 작업) |
+
+### 2. 스키마 적용
+
+Supabase Dashboard → SQL Editor에서 [`docs/supabase-schema.md`](docs/supabase-schema.md)의 SQL을 실행합니다.
+
+### 3. 타입 재생성
+
+```bash
+npx supabase gen types typescript --project-id <ref> > src/lib/supabase/types.ts
+```
+
+### 4. 어댑터 활성화
+
+환경변수가 설정되면 `realtimeAdapter`가 자동으로 `SupabaseRealtimeAdapter`로 전환됩니다.
+`src/lib/supabase/realtime.ts` 내 stub 주석을 해제하면 실제 브로드캐스트가 동작합니다.
+
+### 아키텍처 (어댑터 패턴)
+
+```
+eventBus.emit()
+  └─ Zustand store 업데이트 (항상)
+  └─ realtimeAdapter.broadcast()
+       ├─ MockRealtimeAdapter  → no-op (env vars 없을 때)
+       └─ SupabaseRealtimeAdapter → supabase.channel('sim-events').send() (env vars 있을 때)
+```
+
+---
+
 ## Mock Mode — 미연결 항목
 
 다음 항목은 **스텁(stub)** 구현만 존재하며 실제 동작하지 않습니다.
@@ -120,19 +164,24 @@ src/
 │   │   ├── AgentStatus.tsx   # 에이전트 상태 패널
 │   │   └── EventLog.tsx      # 이벤트 로그 (접기/펼치기)
 │   └── command-center/
-│       └── CommandCenterPlaceholder.tsx  # 워크플로우 그래프 플레이스홀더
+│       ├── WorkflowGraph.tsx             # React Flow 워크플로우 그래프 (실제 구현)
+│       └── CommandCenterPlaceholder.tsx  # 이전 정적 플레이스홀더 (보존)
 │
 ├── lib/
 │   ├── simulation/
 │   │   ├── engine.ts         # SimulationEngine — 48초 루프 + 5가지 시나리오 메서드
-│   │   ├── eventBus.ts       # 타입드 이벤트 버스 (Supabase/AgentOps 훅 위치 표시)
+│   │   ├── eventBus.ts       # 타입드 이벤트 버스 → realtimeAdapter 연결됨
 │   │   └── config.ts         # 오피스 좌표, 에이전트 초기값
+│   ├── supabase/
+│   │   ├── client.ts         # Supabase 클라이언트 (null-safe, graceful fallback)
+│   │   ├── types.ts          # 데이터베이스 타입 정의
+│   │   └── realtime.ts       # RealtimeAdapter 인터페이스 + Mock/Supabase 구현체
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   ├── realtime/
-│   │   └── index.ts          # Supabase Realtime 스텁
+│   │   └── index.ts          # Supabase Realtime 채널 스텁 (구버전)
 │   └── agentops/
-│       └── index.ts          # AgentOps 스텁 + React Flow 노드/엣지 정의
+│       └── index.ts          # AgentOps 스텁 + 워크플로우 노드/엣지 정의
 │
 ├── store/
 │   └── simulationStore.ts    # Zustand 스토어 — 에이전트·태스크·이벤트 상태
@@ -153,6 +202,6 @@ src/
 | 그래픽 | SVG 픽셀아트 (`image-rendering: pixelated`) |
 | 렌더링 최적화 | ResizeObserver + DOM ref 직접 조작 (React 배칭 우회) |
 | 미래 LLM | Anthropic SDK (`@anthropic-ai/sdk`) — 미연결 |
-| 미래 실시간 | Supabase Realtime — 미연결 |
+| 실시간 (준비) | Supabase Realtime — 어댑터 구조 완료, 실제 호출 미연결 |
 | 미래 관측성 | AgentOps — 미연결 |
 | 미래 워크플로우 | LangGraph / CrewAI / React Flow — 미연결 |

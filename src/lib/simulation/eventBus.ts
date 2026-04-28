@@ -2,18 +2,14 @@
  * eventBus — typed mock event layer
  *
  * Emits named events and writes them into the Zustand store (SimEvent).
- * Future hooks:
- *   - Supabase Realtime: replace/add store write with supabaseChannel.send()
- *   - AgentOps:          add agentops.trackEvent() call inside emit()
+ * Transport hooks:
+ *   - Supabase Realtime: realtimeAdapter.broadcast() (no-op in mock mode, live when configured)
+ *   - AgentOps:          TODO — agentops.trackEvent() call (Milestone 3)
  */
 
 import { useSimStore } from '@/store/simulationStore';
-import type { AgentRole, BusEventType, EventType } from '@/types';
-
-interface BusPayload {
-  agentId: AgentRole;
-  data?: Record<string, unknown>;
-}
+import { realtimeAdapter } from '@/lib/supabase/realtime';
+import type { BusEventType, BusPayload, EventType } from '@/types';
 
 // Maps bus event types → display category used in EventLog
 const BUS_TO_DISPLAY: Record<BusEventType, EventType> = {
@@ -56,10 +52,10 @@ export const eventBus = {
       message:    formatMessage(type, payload),
     });
 
-    // TODO: Supabase Realtime hook
-    // await supabaseChannel.send({ type: 'broadcast', event: type, payload });
+    // Supabase Realtime broadcast (no-op in mock mode, live when NEXT_PUBLIC_SUPABASE_URL is set)
+    void realtimeAdapter.broadcast(type, payload);
 
-    // TODO: AgentOps hook
+    // TODO (Milestone 3): AgentOps hook
     // agentops.trackEvent({ agentId: payload.agentId, eventName: type, payload: payload.data ?? {}, timestamp: Date.now() });
   },
 };

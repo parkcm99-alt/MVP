@@ -25,6 +25,12 @@ export type BusEventType =
   | 'task.completed'
   | 'issue.found';
 
+/** Event bus payload — shared between eventBus and RealtimeAdapter */
+export interface BusPayload {
+  agentId: AgentRole;
+  data?:   Record<string, unknown>;
+}
+
 export interface Position {
   x: number;
   y: number;
