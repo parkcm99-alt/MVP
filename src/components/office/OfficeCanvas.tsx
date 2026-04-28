@@ -8,6 +8,7 @@ import type { AgentRole, AgentStatus } from '@/types';
 import OfficeFurniture from './OfficeFurniture';
 import AgentSprite from './AgentSprite';
 import SpeechBubble from './SpeechBubble';
+import ActionBar from './ActionBar';
 
 // ── status overlay icons ──────────────────────────────────────────────────────
 
@@ -165,50 +166,13 @@ export default function OfficeCanvas() {
             className="ctrl-btn"
             onClick={() => isRunning ? simulationEngine.stop() : simulationEngine.start()}
           >
-            {isRunning ? '⏸ PAUSE' : '▶ START'}
+            {isRunning ? '⏸ PAUSE' : '⏵ RESUME'}
           </button>
         </div>
       </div>
 
       {/* ── sprint scenario control bar ── */}
-      <div className="sprint-bar">
-        <span className="sprint-bar-label">ACTIONS</span>
-        <button
-          className="sprint-btn sprint-btn-start"
-          onClick={() => simulationEngine.startSprint()}
-          title="새 스프린트 시작"
-        >
-          ▶ Start Sprint
-        </button>
-        <button
-          className="sprint-btn sprint-btn-meeting"
-          onClick={() => simulationEngine.callMeeting()}
-          title="전체 미팅 소집"
-        >
-          💬 Call Meeting
-        </button>
-        <button
-          className="sprint-btn sprint-btn-task"
-          onClick={() => simulationEngine.createMockTask()}
-          title="랜덤 태스크 추가"
-        >
-          + Add Task
-        </button>
-        <button
-          className="sprint-btn sprint-btn-complete"
-          onClick={() => simulationEngine.completeSprint()}
-          title="스프린트 즉시 완료"
-        >
-          ✓ Complete
-        </button>
-        <button
-          className="sprint-btn sprint-btn-reset"
-          onClick={() => simulationEngine.resetOffice()}
-          title="오피스 초기화"
-        >
-          ↺ Reset
-        </button>
-      </div>
+      <ActionBar />
 
       {/* ── scale-to-fit canvas area ── */}
       <div
