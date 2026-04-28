@@ -2,7 +2,7 @@ import OfficeCanvas from '@/components/office/OfficeCanvas';
 import TaskQueue from '@/components/panels/TaskQueue';
 import AgentStatus from '@/components/panels/AgentStatus';
 import EventLog from '@/components/panels/EventLog';
-import CommandCenterPlaceholder from '@/components/command-center/CommandCenterPlaceholder';
+import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 
 export default function Page() {
   return (
@@ -26,7 +26,7 @@ export default function Page() {
         <div className="side-col">
           <TaskQueue />
           <AgentStatus />
-          <CommandCenterPlaceholder />
+          <WorkflowGraph />
         </div>
 
       </div>

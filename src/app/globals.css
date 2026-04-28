@@ -431,77 +431,67 @@ html, body {
 .panel-collapse-btn:hover { background: #1E293B; color: var(--text-bright); }
 
 /* ────────────────────────────────────────────────
-   Command Center (Workflow Graph)
+   Command Center (Workflow Graph — React Flow)
 ───────────────────────────────────────────────── */
 .cmd-center {
   flex: none;
-  height: 128px;
+  height: 160px;
   border-top: 1px solid var(--border-bright);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: #06090F;
+}
+
+/* React Flow global overrides — keep our dark theme */
+.cmd-center .react-flow__renderer          { background: #06090F; }
+.cmd-center .react-flow__edge path         { transition: stroke 0.25s, stroke-width 0.25s; }
+.cmd-center .react-flow__edge-label        { font-family: 'Courier New', monospace; }
+.cmd-center .react-flow__node              { border-radius: 2px; }
+.cmd-center .react-flow__node.selected > * { outline: none; }
+.cmd-center .react-flow__background        { background: #06090F; }
+
+/* node click selection ring handled inline via border */
+.cmd-center .react-flow__node:focus        { outline: none; }
+.cmd-center .react-flow__handle           { border: none !important; background: transparent !important; }
+
+/* ── Workflow tooltip (selected agent info) ─── */
+.wf-tooltip {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 168px;
   background: #060D17;
-}
-.cmd-flow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0;
-  padding: 6px 6px 0;
-  flex: 1;
-  overflow: hidden;
-}
-.cmd-node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.cmd-node-box {
-  width: 38px;
-  height: 30px;
-  border: 1px solid var(--border-bright);
+  border: 1.5px solid var(--accent);
   border-radius: 2px;
+  padding: 7px 8px;
+  z-index: 300;
+  font-family: 'Courier New', monospace;
+  box-shadow: 3px 3px 0 #000, 0 0 12px rgba(56,189,248,0.12);
+  animation: cardIn 0.12s ease-out;
+}
+.wf-tooltip-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  background: #0A0F1A;
-  cursor: default;
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-  position: relative;
-}
-.cmd-node-box.active {
-  background: #0C1C2E;
-}
-.cmd-node-box.blocked-node {
-  border-color: #EF4444;
-  background: #200505;
-}
-.cmd-node-label {
-  font-size: 7px;
-  color: var(--text-dim);
-  font-family: 'Courier New', monospace;
-  letter-spacing: 0.3px;
-  text-align: center;
-  line-height: 1;
-}
-.cmd-arrow {
+  justify-content: space-between;
   font-size: 9px;
-  color: var(--border-bright);
-  flex-shrink: 0;
-  padding: 0 2px;
-  padding-bottom: 14px;
-  line-height: 1;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  margin-bottom: 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-bright);
 }
-.cmd-footer {
-  font-size: 7px;
-  color: var(--border);
-  font-family: 'Courier New', monospace;
-  text-align: center;
-  padding: 4px 0 6px;
-  letter-spacing: 0.3px;
+.wf-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 8px;
+  margin-top: 3px;
+  gap: 4px;
+}
+.wf-tooltip-label {
+  color: var(--text-dim);
+  flex-shrink: 0;
 }
 
 /* ────────────────────────────────────────────────
