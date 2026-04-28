@@ -1,0 +1,79 @@
+export type AgentRole = 'planner' | 'architect' | 'developer' | 'reviewer' | 'qa';
+export type AgentStatus = 'idle' | 'working' | 'walking' | 'meeting' | 'thinking';
+export type TaskStatus = 'backlog' | 'in_progress' | 'review' | 'done';
+export type TaskPriority = 'low' | 'medium' | 'high';
+export type EventType = 'task' | 'meeting' | 'chat' | 'system' | 'review';
+
+export interface Position {
+  x: number;
+  y: number;
+}
+
+export interface Agent {
+  id: AgentRole;
+  name: string;
+  role: AgentRole;
+  emoji: string;
+  primaryColor: string;
+  spriteColor: string;
+  pantColor: string;
+  deskPosition: Position;
+  position: Position;
+  status: AgentStatus;
+  currentTask: string | null;
+  speech: string | null;
+  completedTasks: number;
+}
+
+export interface SimTask {
+  id: string;
+  title: string;
+  description: string;
+  assignedTo: AgentRole | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SimEvent {
+  id: string;
+  timestamp: number;
+  agentId: AgentRole;
+  agentName: string;
+  agentColor: string;
+  type: EventType;
+  message: string;
+}
+
+// ──────────────────────────────────────────────
+// Future integration interfaces (not yet wired)
+// ──────────────────────────────────────────────
+
+/** Claude API message format (Anthropic SDK) */
+export interface LLMMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** AgentOps event (to be sent via agentops SDK) */
+export interface AgentOpsEvent {
+  agentId: AgentRole;
+  eventName: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
+/** Supabase Realtime channel payload */
+export interface RealtimePayload {
+  type: 'agent_update' | 'task_update' | 'new_event';
+  data: unknown;
+}
+
+/** LangGraph / CrewAI node definition */
+export interface WorkflowNode {
+  id: string;
+  type: 'agent' | 'tool' | 'condition';
+  agentRole?: AgentRole;
+  label: string;
+}
