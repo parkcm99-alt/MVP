@@ -36,6 +36,14 @@ function safePlannerResponse(
   };
 }
 
+function withDevDebug(
+  response: PlannerAgentResponse,
+  debugReason?: string,
+): PlannerAgentResponse {
+  if (process.env.NODE_ENV === 'production' || !debugReason) return response;
+  return { ...response, debugReason };
+}
+
 function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false): string[] {
   if (!Array.isArray(value)) return fallback;
   const cleaned = value
@@ -106,11 +114,22 @@ export async function POST(request: Request) {
     'Review the current sprint and suggest the safest next handoff.',
   );
 
-  const liveEnabled = process.env.ENABLE_LIVE_LLM === 'true';
+  const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
+  const liveEnabled = normalizedLiveFlag === 'true';
   const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 
-  if (!liveEnabled || !hasApiKey) {
-    return Response.json(await buildMockResponse(taskTitle, taskDescription));
+  if (!liveEnabled) {
+    return Response.json(withDevDebug(
+      await buildMockResponse(taskTitle, taskDescription),
+      `live_disabled:${normalizedLiveFlag ?? 'missing'}`,
+    ));
+  }
+
+  if (!hasApiKey) {
+    return Response.json(withDevDebug(
+      await buildMockResponse(taskTitle, taskDescription),
+      'missing_api_key',
+    ));
   }
 
   const plannerPrompt = getAgentRolePrompt(ROLE);
@@ -132,8 +151,8 @@ export async function POST(request: Request) {
         ].join('\n'),
       },
     ],
-    maxTokens: 450,
+    maxTokens: 320,
   });
 
-  return Response.json(parsePlannerContent(llm));
+  return Response.json(withDevDebug(parsePlannerContent(llm), llm.fallbackReason));
 }

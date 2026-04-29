@@ -86,4 +86,5 @@ export interface PlannerAgentResponse {
   steps: string[];
   risks: string[];
   nextAgent: string;
+  debugReason?: string;
 }
