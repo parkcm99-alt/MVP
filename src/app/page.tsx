@@ -4,10 +4,13 @@ import AgentStatus from '@/components/panels/AgentStatus';
 import EventLog from '@/components/panels/EventLog';
 import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 import ConnectionStatus from '@/components/debug/ConnectionStatus';
+import RealtimeSyncClient from '@/components/RealtimeSyncClient';
 
 export default function Page() {
   return (
     <div className="app-shell">
+      {/* Realtime subscription — renders nothing, runs client-side only */}
+      <RealtimeSyncClient />
       {/* title bar */}
       <header className="app-titlebar">
         <h1>⬛ AI AGENT OFFICE SIMULATOR</h1>

@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import type { Agent, AgentRole, AgentStatus, SimEvent, SimTask, Position, EventType } from '@/types';
+import type { Agent, AgentRole, AgentStatus, SimEvent, SimTask, TaskStatus, TaskPriority, Position, EventType } from '@/types';
 import { AGENTS_INIT } from '@/lib/simulation/config';
 import { upsertAgent, upsertTask } from '@/lib/supabase/persistence';
+import type { AgentRow, TaskRow } from '@/lib/supabase/types';
 
 interface SimulationStore {
   agents: Record<AgentRole, Agent>;
@@ -22,6 +23,14 @@ interface SimulationStore {
 
   setRunning:  (v: boolean) => void;
   resetStore:  () => void;
+
+  /**
+   * Sync-only mutations — called from the Realtime subscription path.
+   * These update Zustand directly WITHOUT writing back to Supabase,
+   * preventing echo loops and cross-session data corruption.
+   */
+  syncAgent: (row: AgentRow) => void;
+  syncTask:  (row: TaskRow)  => void;
 }
 
 const buildInitialAgents = (): Record<AgentRole, Agent> =>
@@ -105,6 +114,48 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
   // Reset clears local state only — Supabase rows are session-scoped and left as-is
   // (no DELETE permission for anon key; stale rows expire naturally with the session)
   resetStore: () => set(INITIAL_STATE()),
+
+  // ── Realtime sync path (no persistence) ─────────────────────────────────────
+
+  syncAgent: (row) => {
+    const id = row.id as AgentRole;
+    set(s => {
+      const agent = s.agents[id];
+      if (!agent) return s; // unknown role — ignore
+      return {
+        agents: {
+          ...s.agents,
+          [id]: {
+            ...agent,
+            status:         row.status    as AgentStatus,
+            currentTask:    row.current_task,
+            position:       { x: row.position_x, y: row.position_y },
+            completedTasks: row.completed_tasks,
+          },
+        },
+      };
+    });
+  },
+
+  syncTask: (row) => {
+    set(s => {
+      const exists = s.tasks.some(t => t.id === row.id);
+      const mapped: SimTask = {
+        id:          row.id,
+        title:       row.title,
+        description: row.description,
+        assignedTo:  row.assigned_to as AgentRole | null,
+        status:      row.status   as TaskStatus,
+        priority:    row.priority as TaskPriority,
+        createdAt:   Date.now(),
+        updatedAt:   Date.now(),
+      };
+      if (exists) {
+        return { tasks: s.tasks.map(t => t.id === row.id ? { ...t, ...mapped } : t) };
+      }
+      return { tasks: [...s.tasks, mapped] };
+    });
+  },
 }));
 
 // ── ID generators ──────────────────────────────────────────────────────────────

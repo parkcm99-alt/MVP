@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
+import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
 
 const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
@@ -12,10 +13,6 @@ const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
   system:  { color: '#94A3B8', prefix: '[SYS]'  },
 };
 
-function fmtTime(ts: number): string {
-  const d = new Date(ts);
-  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
-}
 
 const EXPANDED_HEIGHT = 130;
 const COLLAPSED_HEIGHT = 28; // header only
@@ -91,7 +88,7 @@ export default function EventLog() {
                   animation:  'eventIn 0.2s ease-out',
                 }}
               >
-                <span style={{ color: '#334155', flexShrink: 0 }}>{fmtTime(evt.timestamp)}</span>
+                <span style={{ color: '#334155', flexShrink: 0 }}>{formatKstTime(evt.timestamp)}</span>
                 <span style={{ color: style.color, flexShrink: 0 }}>{style.prefix}</span>
                 <span style={{ color: '#CBD5E1' }}>{evt.message}</span>
               </div>

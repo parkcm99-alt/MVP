@@ -77,6 +77,8 @@ npm run build     # 프로덕션 빌드
 
 Supabase 없이도 앱은 정상 동작합니다 (MOCK MODE). 이벤트 영속화 및 실시간 멀티플레이어가 필요한 경우:
 
+> **Supabase Table Editor의 UTC 표시는 정상입니다.** DB는 `timestamptz`(UTC)로 저장되고, 화면 Event Log는 `Asia/Seoul`(KST, UTC+9) 기준으로 변환해 표시합니다. 시간대 변환은 `src/lib/time.ts`의 `formatKstTime`이 담당합니다.
+
 ### 1. 환경변수 설정
 
 ```bash
@@ -138,6 +140,46 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 
 ---
 
+## Realtime 멀티플레이어 테스트
+
+두 브라우저 창을 열어서 한쪽 이벤트가 반대쪽에 실시간 반영되는지 확인하는 방법입니다.
+
+### 준비
+
+1. Supabase 환경변수가 설정된 상태에서 앱을 실행합니다 (`npm run dev` 또는 Vercel 배포 URL)
+2. 두 창 모두 화면 상단에 **SUPABASE LIVE** 배지가 보여야 합니다
+3. 각 창은 별도의 `session_id` (탭 단위 UUID)를 가집니다
+
+### 테스트 절차
+
+| 단계 | 창 A (관찰자) | 창 B (조작자) |
+|------|--------------|--------------|
+| 1 | 앱 열기 (아무 동작 없이 대기) | 앱 열기 |
+| 2 | Event Log 확인 | **Start Sprint** 버튼 클릭 |
+| 3 | ✅ 창 B에서 발생한 이벤트가 Event Log에 실시간 표시 | 시뮬레이션 진행 |
+| 4 | Agent Status 패널 확인 | 에이전트 상태 변경됨 |
+| 5 | ✅ 창 B의 에이전트 상태가 창 A에도 반영 | — |
+| 6 | Task Queue 확인 | **Add Task** 버튼 클릭 |
+| 7 | ✅ 창 B에서 추가한 태스크가 창 A의 큐에 표시 | — |
+
+### 주의 사항
+
+- 같은 브라우저의 **같은 탭**을 새로고침하면 새 `session_id`가 발급됩니다
+- **시크릿 창** 또는 **다른 브라우저**를 사용하면 완전히 독립된 세션으로 테스트됩니다
+- 두 창이 동시에 Start Sprint를 누르면 각자의 시뮬레이션이 독립 실행되지만 이벤트 로그는 합산됩니다 (의도된 동작)
+- 오피스 캐릭터 이동 애니메이션은 자신의 시뮬레이션 기준이며, 외부 세션의 포지션 변경은 상태만 동기화됩니다
+
+### 구독 채널 구조
+
+| 채널명 | 테이블 | 이벤트 | 필터 |
+|--------|--------|--------|------|
+| `sim-multiplayer` | `events` | INSERT | session_id ≠ 나 |
+| `sim-multiplayer` | `agents` | INSERT, UPDATE | session_id ≠ 나 |
+| `sim-multiplayer` | `tasks`  | INSERT, UPDATE | session_id ≠ 나 |
+| `_conn_check` | — | channel state | 상태 배지 전용 |
+
+---
+
 ## 현재 미연결 항목
 
 다음 항목은 **스텁(stub)** 구현만 존재하며 실제 동작하지 않습니다.
@@ -190,6 +232,7 @@ src/
 │   │   └── EventLog.tsx      # 이벤트 로그 (접기/펼치기)
 │   ├── command-center/
 │   │   └── WorkflowGraph.tsx # React Flow 워크플로우 그래프 (Zustand 연결)
+│   ├── RealtimeSyncClient.tsx    # null-render — useRealtimeSync 훅을 앱 레벨에서 마운트
 │   └── debug/
 │       └── ConnectionStatus.tsx  # Supabase 연결 상태 배지 (LIVE / PARTIAL ERR / ERROR)
 │
@@ -202,9 +245,11 @@ src/
 │   │   ├── client.ts         # Supabase 클라이언트 (null-safe, graceful fallback)
 │   │   ├── session.ts        # 탭별 UUID 세션 ID (sessionStorage 영속)
 │   │   ├── types.ts          # 데이터베이스 타입 정의
-│   │   ├── realtime.ts       # RealtimeAdapter 인터페이스 + Mock/Supabase 구현체
+│   │   ├── realtime.ts       # RealtimeAdapter 인터페이스 + Mock/Supabase 구현체 (events write)
 │   │   ├── persistence.ts    # upsertAgent / upsertTask (Phase 2)
 │   │   └── errorTracker.ts   # 퍼시스턴스 에러 pub/sub (PARTIAL ERR 배지 구동)
+│   └── hooks/
+│       └── useRealtimeSync.ts  # Realtime 구독 훅 — events/agents/tasks 3-table 채널
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   └── agentops/
