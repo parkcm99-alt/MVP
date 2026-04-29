@@ -2,6 +2,7 @@
 
 import { type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
+import { assignPlannerStep } from '@/lib/agents/plannerStepAssignment';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
@@ -85,28 +86,6 @@ function buildPlannerResponseFingerprint(taskTitle: string, summary: string, ste
   ].join('|');
 }
 
-function inferStepAssignee(step: string): AgentRole {
-  const text = step.toLowerCase();
-
-  if (/(리뷰|검토|review|inspect|audit)/i.test(text)) {
-    return 'reviewer';
-  }
-  if (/(테스트|검증|qa|품질|회귀|test|verify|validate|quality)/i.test(text)) {
-    return 'qa';
-  }
-  if (/(설계|구조|아키텍처|architecture|architect|system design|data flow)/i.test(text)) {
-    return 'architect';
-  }
-  if (/(구현|api|코드|개발|프론트|백엔드|implement|code|develop|endpoint)/i.test(text)) {
-    return 'developer';
-  }
-  if (/(기획|요구사항|계획|범위|우선순위|plan|requirement|scope|prioritize)/i.test(text)) {
-    return 'planner';
-  }
-
-  return 'planner';
-}
-
 function createTasksFromPlannerSteps(
   responseFingerprint: string,
   sourceTaskTitle: string,
@@ -124,14 +103,16 @@ function createTasksFromPlannerSteps(
   if (cleanSteps.length === 0) return [];
 
   const store = useSimStore.getState();
-  const createdTasks = cleanSteps.map((step, index) =>
-    store.addTask({
-      title: step.length > 72 ? `${step.slice(0, 69)}...` : step,
-      description: `${PLANNER_GENERATED_MARKER} source="${sourceTaskTitle}" response="${responseFingerprint.slice(0, 12)}" step=${index + 1}`,
-      assignedTo: inferStepAssignee(step),
-      status: 'backlog',
-      priority: sourcePriority,
-    }),
+  const createdTasks = cleanSteps.flatMap((step, index) =>
+    assignPlannerStep(step).map(spec =>
+      store.addTask({
+        title: spec.title,
+        description: `${PLANNER_GENERATED_MARKER} source="${sourceTaskTitle}" response="${responseFingerprint.slice(0, 12)}" step=${index + 1} original="${spec.originalStep}"`,
+        assignedTo: spec.assignedTo,
+        status: 'backlog',
+        priority: sourcePriority,
+      }),
+    ),
   );
 
   generatedFingerprints.add(responseFingerprint);

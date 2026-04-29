@@ -55,6 +55,8 @@ const INITIAL_STATE = () => ({
   isRunning: false,
 });
 
+const MAX_VISIBLE_EVENTS = 200;
+
 export const useSimStore = create<SimulationStore>((set, get) => ({
   ...INITIAL_STATE(),
 
@@ -107,7 +109,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
       events: [
         { ...e, id: uid(), timestamp: Date.now() },
         ...s.events,
-      ].slice(0, 80),
+      ].slice(0, MAX_VISIBLE_EVENTS),
     })),
 
   setRunning: (isRunning) => set({ isRunning }),

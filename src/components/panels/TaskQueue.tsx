@@ -20,6 +20,12 @@ const ROLE_EMOJIS: Record<string, string> = {
   planner: '📋', architect: '🏗️', developer: '💻', reviewer: '🔍', qa: '🧪',
 };
 
+function formatDescription(description: string): string {
+  const original = description.match(/original="([^"]+)"/)?.[1];
+  if (original) return original;
+  return description;
+}
+
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
 
@@ -62,20 +68,20 @@ export default function TaskQueue() {
                     gap: 2,
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+                    <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
                       {task.title}
                     </span>
-                    <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace' }}>
+                    <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
                       {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace' }}>
-                      {task.description}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
+                    <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
+                      {formatDescription(task.description)}
                     </span>
                     {task.assignedTo && (
-                      <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace' }}>
+                      <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
                         {ROLE_EMOJIS[task.assignedTo]} {task.assignedTo}
                       </span>
                     )}
