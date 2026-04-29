@@ -104,7 +104,7 @@ npx supabase gen types typescript --project-id <ref> > src/lib/supabase/types.ts
 
 환경변수가 설정되면 `realtimeAdapter`가 자동으로 `SupabaseRealtimeAdapter`로 전환됩니다.
 
-### 아키텍처 (어댑터 패턴)
+### 아키텍처
 
 ```
 eventBus.emit()
@@ -113,7 +113,23 @@ eventBus.emit()
        ├─ MockRealtimeAdapter        → no-op (env vars 없을 때)
        └─ SupabaseRealtimeAdapter    → events 테이블 INSERT (env vars 있을 때)
             └─ subscribe()           → postgres_changes 구독, session_id 중복 필터
+
+simulationStore (상태 변경 시)
+  ├─ moveAgent / setStatus / setTask / bumpCompleted
+  │    └─ upsertAgent() → agents 테이블 UPSERT (conflict: id, session_id)
+  ├─ addTask / updateTask
+  │    └─ upsertTask()  → tasks  테이블 UPSERT (conflict: id)
+  └─ setSpeech / resetStore → 퍼시스턴스 없음 (transient 또는 세션 범위)
 ```
+
+### 연결 상태 배지
+
+| 배지 | 의미 |
+|------|------|
+| MOCK MODE | 환경변수 미설정 — mock만 동작 |
+| SUPABASE LIVE | 채널 구독 성공, 모든 쓰기 정상 |
+| SUPABASE PARTIAL ERR | 채널은 OK, 일부 agent/task upsert 실패 |
+| SUPABASE ERROR | 채널 연결 실패 |
 
 ### Vercel 배포 시 환경변수
 
@@ -175,7 +191,7 @@ src/
 │   ├── command-center/
 │   │   └── WorkflowGraph.tsx # React Flow 워크플로우 그래프 (Zustand 연결)
 │   └── debug/
-│       └── ConnectionStatus.tsx  # Supabase 연결 상태 배지
+│       └── ConnectionStatus.tsx  # Supabase 연결 상태 배지 (LIVE / PARTIAL ERR / ERROR)
 │
 ├── lib/
 │   ├── simulation/
@@ -186,7 +202,9 @@ src/
 │   │   ├── client.ts         # Supabase 클라이언트 (null-safe, graceful fallback)
 │   │   ├── session.ts        # 탭별 UUID 세션 ID (sessionStorage 영속)
 │   │   ├── types.ts          # 데이터베이스 타입 정의
-│   │   └── realtime.ts       # RealtimeAdapter 인터페이스 + Mock/Supabase 구현체
+│   │   ├── realtime.ts       # RealtimeAdapter 인터페이스 + Mock/Supabase 구현체
+│   │   ├── persistence.ts    # upsertAgent / upsertTask (Phase 2)
+│   │   └── errorTracker.ts   # 퍼시스턴스 에러 pub/sub (PARTIAL ERR 배지 구동)
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   └── agentops/
@@ -210,7 +228,7 @@ src/
 | 스타일 | 커스텀 CSS (`globals.css`) — Tailwind 미사용 |
 | 그래픽 | SVG 픽셀아트 (`image-rendering: pixelated`) |
 | 워크플로우 그래프 | @xyflow/react (React Flow) |
-| 실시간 DB | Supabase Realtime — events 테이블 insert/subscribe 완료 |
+| 실시간 DB | Supabase Realtime — events insert/subscribe + agents/tasks upsert 완료 |
 | 배포 | Vercel (프로덕션) |
 | 미래 LLM | Anthropic SDK (`@anthropic-ai/sdk`) — 미연결 |
 | 미래 관측성 | AgentOps — 미연결 |

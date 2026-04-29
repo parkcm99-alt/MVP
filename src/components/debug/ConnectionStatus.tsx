@@ -4,51 +4,59 @@
  * ConnectionStatus — small badge in the app titlebar.
  *
  * States:
- *   MOCK MODE      — NEXT_PUBLIC_SUPABASE_URL not set, app runs in full mock
- *   SUPABASE LIVE  — Realtime channel subscribed successfully
- *   SUPABASE ERROR — channel failed or timed out
- *
- * Only shown in development (process.env.NODE_ENV === 'development').
- * Remove the guard below to show it in production too.
+ *   MOCK MODE             — NEXT_PUBLIC_SUPABASE_URL not set
+ *   SUPABASE LIVE         — channel subscribed, all writes OK
+ *   SUPABASE PARTIAL ERR  — channel OK but ≥1 agent/task upsert failed
+ *   SUPABASE ERROR        — channel failed or timed out
  */
 
 import { useEffect, useState } from 'react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { onPersistenceErrorChange } from '@/lib/supabase/errorTracker';
 
-type ConnStatus = 'mock' | 'connecting' | 'ready' | 'error';
+type ConnStatus = 'mock' | 'connecting' | 'ready' | 'partial' | 'error';
 
 const META: Record<ConnStatus, { label: string; color: string }> = {
-  mock:       { label: 'MOCK MODE',      color: '#475569' },
-  connecting: { label: 'SUPABASE...',    color: '#D97706' },
-  ready:      { label: 'SUPABASE LIVE',  color: '#16A34A' },
-  error:      { label: 'SUPABASE ERROR', color: '#DC2626' },
+  mock:       { label: 'MOCK MODE',            color: '#475569' },
+  connecting: { label: 'SUPABASE...',           color: '#D97706' },
+  ready:      { label: 'SUPABASE LIVE',         color: '#16A34A' },
+  partial:    { label: 'SUPABASE PARTIAL ERR',  color: '#CA8A04' },
+  error:      { label: 'SUPABASE ERROR',        color: '#DC2626' },
 };
 
 export default function ConnectionStatus() {
-  // Initialise synchronously so the effect never needs to call setStatus(error)
-  // for the !sb case (avoids ESLint react-hooks/set-state-in-effect)
   const [status, setStatus] = useState<ConnStatus>(() => {
     if (!isSupabaseConfigured)    return 'mock';
-    if (!getSupabaseClient())     return 'error'; // env set but client failed
+    if (!getSupabaseClient())     return 'error';
     return 'connecting';
   });
 
+  // Channel subscription state
   useEffect(() => {
     if (!isSupabaseConfigured) return;
 
     const sb = getSupabaseClient();
-    if (!sb) return; // initial state already set to 'error'
+    if (!sb) return;
 
     const ch = sb.channel('_conn_check').subscribe((state) => {
       switch (state) {
-        case 'SUBSCRIBED':    setStatus('ready');   break;
-        case 'CHANNEL_ERROR': setStatus('error');   break;
-        case 'TIMED_OUT':     setStatus('error');   break;
-        case 'CLOSED':        setStatus('error');   break;
+        case 'SUBSCRIBED':    setStatus(s => s === 'partial' ? 'partial' : 'ready'); break;
+        case 'CHANNEL_ERROR': setStatus('error'); break;
+        case 'TIMED_OUT':     setStatus('error'); break;
+        case 'CLOSED':        setStatus('error'); break;
       }
     });
 
     return () => { void sb.removeChannel(ch); };
+  }, []);
+
+  // Persistence error subscription — setStatus only called from the async callback,
+  // never synchronously in the effect body (avoids react-hooks/set-state-in-effect)
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+    return onPersistenceErrorChange(() => {
+      setStatus(s => s === 'ready' || s === 'connecting' ? 'partial' : s);
+    });
   }, []);
 
   const { label, color } = META[status];
