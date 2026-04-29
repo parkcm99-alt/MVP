@@ -20,6 +20,7 @@ const BUS_TO_DISPLAY: Record<BusEventType, EventType> = {
   'agent.status.changed':  'system',
   'agent.message':         'chat',
   'agent.planning':        'planning',
+  'task.started':          'task',
   'meeting.started':       'meeting',
   'task.completed':        'task',
   'issue.found':           'review',
@@ -40,6 +41,7 @@ function formatMessage(type: BusEventType, payload: BusPayload): string {
         : '';
       return `[${agent.name}] 계획 완료: ${d.summary ?? ''}${steps ? ` | ${steps}` : ''}`;
     }
+    case 'task.started':         return `[${agent.name}] 태스크 시작: ${d.task ?? ''}`;
     case 'meeting.started':      return `[${agent.name}] 미팅 시작`;
     case 'task.completed':       return `[${agent.name}] 태스크 완료: ${d.task ?? ''}`;
     case 'issue.found':          return `[${agent.name}] 이슈 발견: ${d.issue ?? ''}`;

@@ -22,6 +22,7 @@ export type BusEventType =
   | 'agent.status.changed'
   | 'agent.message'
   | 'agent.planning'
+  | 'task.started'
   | 'meeting.started'
   | 'task.completed'
   | 'issue.found';

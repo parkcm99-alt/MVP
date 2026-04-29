@@ -16,7 +16,7 @@ interface SimulationStore {
   setTask:      (id: AgentRole, task: string | null) => void;
   bumpCompleted:(id: AgentRole) => void;
 
-  addTask:    (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addTask:    (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => SimTask;
   updateTask: (id: string, patch: Partial<SimTask>) => void;
 
   addEvent: (e: Omit<SimEvent, 'id' | 'timestamp'>) => void;
@@ -91,6 +91,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
     const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now() };
     set(s => ({ tasks: [...s.tasks, newTask] }));
     void upsertTask(newTask);
+    return newTask;
   },
 
   updateTask: (id, patch) => {

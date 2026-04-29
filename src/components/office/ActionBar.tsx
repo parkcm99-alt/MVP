@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
+import { DESK_STAND } from '@/lib/simulation/config';
 import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -40,6 +41,17 @@ const STATUS_SCORE: Record<TaskStatus, number> = {
   review: 2,
   backlog: 1,
   done: 0,
+};
+
+const PLANNER_GENERATED_MARKER = '[planner-generated]';
+type BrowserTimer = number;
+
+const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
+  planner: 'thinking',
+  architect: 'thinking',
+  developer: 'coding',
+  reviewer: 'reviewing',
+  qa: 'testing',
 };
 
 function pickHighestPriorityTask(tasks: SimTask[]): SimTask | undefined {
@@ -101,29 +113,106 @@ function createTasksFromPlannerSteps(
   sourcePriority: TaskPriority,
   steps: string[],
   generatedFingerprints: Set<string>,
-): number {
-  if (generatedFingerprints.has(responseFingerprint)) return 0;
+): SimTask[] {
+  if (generatedFingerprints.has(responseFingerprint)) return [];
 
   const cleanSteps = steps
     .map(step => step.trim())
     .filter(Boolean)
     .slice(0, 6);
 
-  if (cleanSteps.length === 0) return 0;
+  if (cleanSteps.length === 0) return [];
 
   const store = useSimStore.getState();
-  cleanSteps.forEach((step, index) => {
+  const createdTasks = cleanSteps.map((step, index) =>
     store.addTask({
       title: step.length > 72 ? `${step.slice(0, 69)}...` : step,
-      description: `Planner generated from "${sourceTaskTitle}" step ${index + 1}`,
+      description: `${PLANNER_GENERATED_MARKER} source="${sourceTaskTitle}" response="${responseFingerprint.slice(0, 12)}" step=${index + 1}`,
       assignedTo: inferStepAssignee(step),
       status: 'backlog',
       priority: sourcePriority,
-    });
-  });
+    }),
+  );
 
   generatedFingerprints.add(responseFingerprint);
-  return cleanSteps.length;
+  return createdTasks;
+}
+
+function schedulePlannerGeneratedWorkflow(
+  tasks: SimTask[],
+  timers: MutableRefObject<BrowserTimer[]>,
+) {
+  tasks.forEach((task, index) => {
+    const agentId = task.assignedTo ?? 'planner';
+    const taskLabel = `${PLANNER_GENERATED_MARKER} ${task.title}`;
+    const startDelay = index * 900;
+    const workDelay = startDelay + 450;
+    const doneDelay = startDelay + 6200;
+    const clearSpeechDelay = doneDelay + 1800;
+    let previousStatus: AgentStatus | null = null;
+    let previousTask: string | null = null;
+    let previousX: number | null = null;
+    let previousY: number | null = null;
+
+    timers.current.push(window.setTimeout(() => {
+      const store = useSimStore.getState();
+      if (store.tasks.find(t => t.id === task.id)?.status === 'done') return;
+      const previousAgent = store.agents[agentId];
+      previousStatus = previousAgent.status;
+      previousTask = previousAgent.currentTask;
+      previousX = previousAgent.position.x;
+      previousY = previousAgent.position.y;
+
+      store.setTask(agentId, taskLabel);
+      store.setStatus(agentId, 'walking');
+      store.moveAgent(agentId, DESK_STAND[agentId]);
+      store.setSpeech(agentId, `태스크 시작: ${task.title}`.slice(0, 64));
+      eventBus.emit('agent.moved', {
+        agentId,
+        data: { source: 'planner-generated', taskId: task.id },
+      });
+      eventBus.emit('task.started', {
+        agentId,
+        data: { task: task.title, taskId: task.id, source: 'planner-generated' },
+      });
+      store.updateTask(task.id, { status: 'in_progress' });
+    }, startDelay));
+
+    timers.current.push(window.setTimeout(() => {
+      const store = useSimStore.getState();
+      if (store.agents[agentId].currentTask !== taskLabel) return;
+      store.setStatus(agentId, PLANNER_WORK_STATUS[agentId]);
+    }, workDelay));
+
+    timers.current.push(window.setTimeout(() => {
+      const store = useSimStore.getState();
+      const currentTask = store.tasks.find(t => t.id === task.id);
+      if (!currentTask || currentTask.status === 'done') return;
+
+      store.updateTask(task.id, { status: 'done' });
+      store.bumpCompleted(agentId);
+      eventBus.emit('task.completed', {
+        agentId,
+        data: { task: task.title, taskId: task.id, source: 'planner-generated' },
+      });
+
+      if (store.agents[agentId].currentTask === taskLabel) {
+        store.setSpeech(agentId, `완료: ${task.title}`.slice(0, 64));
+        store.setStatus(agentId, previousStatus ?? 'idle');
+        store.setTask(agentId, previousTask);
+        if (previousX !== null && previousY !== null) {
+          store.moveAgent(agentId, { x: previousX, y: previousY });
+        }
+      }
+    }, doneDelay));
+
+    timers.current.push(window.setTimeout(() => {
+      const store = useSimStore.getState();
+      if (store.agents[agentId].speech?.startsWith('완료:')) {
+        store.setSpeech(agentId, null);
+      }
+    }, clearSpeechDelay));
+  });
 }
 
 export default function ActionBar() {
@@ -131,6 +220,12 @@ export default function ActionBar() {
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
+  const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
+
+  useEffect(() => () => {
+    plannerWorkflowTimers.current.forEach(window.clearTimeout);
+    plannerWorkflowTimers.current = [];
+  }, []);
 
   async function askPlanner() {
     if (plannerBusy) return;
@@ -162,13 +257,16 @@ export default function ActionBar() {
       const speech = `${providerLabel}: ${summary}`.slice(0, 72);
       const sourcePriority = task?.priority ?? 'medium';
       const responseFingerprint = buildPlannerResponseFingerprint(taskTitle, summary, steps);
-      const createdTaskCount = createTasksFromPlannerSteps(
+      const createdTasks = createTasksFromPlannerSteps(
         responseFingerprint,
         taskTitle,
         sourcePriority,
         steps,
         generatedPlannerResponses.current,
       );
+      const createdTaskCount = createdTasks.length;
+
+      schedulePlannerGeneratedWorkflow(createdTasks, plannerWorkflowTimers);
 
       eventBus.emit('agent.planning', {
         agentId: 'planner',
