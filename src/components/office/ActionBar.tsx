@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
+import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
 interface ActionBtnProps {
@@ -28,6 +29,38 @@ function ActionBtn({ variant, onClick, title, active, disabled, children }: Acti
   );
 }
 
+const PRIORITY_SCORE: Record<TaskPriority, number> = {
+  high: 3,
+  medium: 2,
+  low: 1,
+};
+
+const STATUS_SCORE: Record<TaskStatus, number> = {
+  in_progress: 3,
+  review: 2,
+  backlog: 1,
+  done: 0,
+};
+
+function pickHighestPriorityTask(tasks: SimTask[]): SimTask | undefined {
+  return tasks
+    .filter(task => task.status !== 'done')
+    .sort((a, b) => {
+      const priorityDiff = PRIORITY_SCORE[b.priority] - PRIORITY_SCORE[a.priority];
+      if (priorityDiff !== 0) return priorityDiff;
+
+      const statusDiff = STATUS_SCORE[b.status] - STATUS_SCORE[a.status];
+      if (statusDiff !== 0) return statusDiff;
+
+      return a.createdAt - b.createdAt;
+    })[0] ?? tasks[0];
+}
+
+function buildStepSummary(steps: string[]): string {
+  if (steps.length === 0) return '다음 단계가 비어 있습니다.';
+  return steps.map((step, index) => `${index + 1}. ${step}`).join(' ');
+}
+
 export default function ActionBar() {
   const isRunning = useSimStore(s => s.isRunning);
   const tasks = useSimStore(s => s.tasks);
@@ -36,15 +69,18 @@ export default function ActionBar() {
   async function askPlanner() {
     if (plannerBusy) return;
 
-    const task =
-      tasks.find(t => t.assignedTo === 'planner' && t.status !== 'done') ??
-      tasks.find(t => t.status !== 'done') ??
-      tasks[0];
+    const task = pickHighestPriorityTask(tasks);
     const taskTitle = task?.title ?? '스프린트 계획 점검';
     const taskDescription = task?.description ?? '현재 MVP의 다음 작업을 안전하게 계획합니다.';
-    const pendingSpeech = 'Planner API 테스트 중...';
+    const planningTask = `Planning: ${taskTitle}`;
+    const pendingSpeech = '우선순위 태스크 계획 중...';
+    const previousPlanner = useSimStore.getState().agents.planner;
+    const previousStatus: AgentStatus = previousPlanner.status;
+    const previousTask = previousPlanner.currentTask;
 
     setPlannerBusy(true);
+    useSimStore.getState().setStatus('planner', 'thinking');
+    useSimStore.getState().setTask('planner', planningTask);
     useSimStore.getState().setSpeech('planner', pendingSpeech);
 
     try {
@@ -56,16 +92,27 @@ export default function ActionBar() {
       const result = await response.json() as PlannerAgentResponse;
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Planner';
       const summary = result.summary || 'Planner 응답이 비어 있습니다.';
+      const steps = Array.isArray(result.steps) ? result.steps : [];
       const speech = `${providerLabel}: ${summary}`.slice(0, 72);
 
+      eventBus.emit('agent.planning', {
+        agentId: 'planner',
+        data: {
+          summary,
+          steps,
+          taskTitle,
+          taskPriority: task?.priority ?? 'medium',
+          provider: result.provider,
+          risks: result.risks,
+          nextAgent: result.nextAgent,
+        },
+      });
       eventBus.emit('agent.message', {
         agentId: 'planner',
         data: {
-          message: speech,
+          message: `Steps: ${buildStepSummary(steps)}`,
           taskTitle,
-          steps: result.steps,
-          risks: result.risks,
-          nextAgent: result.nextAgent,
+          provider: result.provider,
         },
       });
 
@@ -76,13 +123,23 @@ export default function ActionBar() {
         }
       }, 4500);
     } catch {
-      const speech = 'Planner API 테스트 실패. Mock simulation은 계속 동작합니다.';
-      eventBus.emit('agent.message', {
+      const speech = 'Planner 호출 실패. Mock simulation은 계속 동작합니다.';
+      eventBus.emit('agent.planning', {
         agentId: 'planner',
-        data: { message: speech, taskTitle },
+        data: {
+          summary: speech,
+          steps: ['기존 mock simulation 흐름을 유지합니다.'],
+          taskTitle,
+          provider: 'mock',
+        },
       });
       useSimStore.getState().setSpeech('planner', speech);
     } finally {
+      const planner = useSimStore.getState().agents.planner;
+      if (planner.currentTask === planningTask) {
+        useSimStore.getState().setStatus('planner', previousStatus);
+        useSimStore.getState().setTask('planner', previousTask);
+      }
       setPlannerBusy(false);
     }
   }
@@ -116,10 +173,10 @@ export default function ActionBar() {
         <ActionBtn
           variant="planner"
           onClick={() => { void askPlanner(); }}
-          title="Planner API route 테스트 (기본값은 mock fallback)"
+          title="가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획"
           disabled={plannerBusy}
         >
-          {plannerBusy ? 'Asking...' : 'Ask Planner'}
+          {plannerBusy ? 'Planning...' : 'Plan with Claude'}
         </ActionBtn>
         <ActionBtn
           variant="complete"

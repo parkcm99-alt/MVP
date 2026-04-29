@@ -12,7 +12,7 @@ export type AgentStatus =
 
 export type TaskStatus   = 'backlog' | 'in_progress' | 'review' | 'done';
 export type TaskPriority = 'low' | 'medium' | 'high';
-export type EventType    = 'task' | 'meeting' | 'chat' | 'system' | 'review';
+export type EventType    = 'task' | 'meeting' | 'chat' | 'system' | 'review' | 'planning';
 
 /** Typed event bus events (mock layer — see eventBus.ts) */
 export type BusEventType =
@@ -21,6 +21,7 @@ export type BusEventType =
   | 'agent.moved'
   | 'agent.status.changed'
   | 'agent.message'
+  | 'agent.planning'
   | 'meeting.started'
   | 'task.completed'
   | 'issue.found';

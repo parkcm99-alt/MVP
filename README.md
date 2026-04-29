@@ -51,7 +51,7 @@
 - **Start Sprint** — 48초 루프 시나리오 시작
 - **Call Meeting** — 전체 미팅 소집
 - **Add Task** — 랜덤 태스크 큐에 추가
-- **Ask Planner** — Planner API route 테스트 (기본값 mock fallback)
+- **Plan with Claude** — 가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
@@ -63,7 +63,7 @@
 
 ### 타입드 이벤트 버스
 `src/lib/simulation/eventBus.ts`에 8종 이벤트 정의:
-`task.created` · `agent.assigned` · `agent.moved` · `agent.status.changed` · `agent.message` · `meeting.started` · `task.completed` · `issue.found`
+`task.created` · `agent.assigned` · `agent.moved` · `agent.status.changed` · `agent.message` · `agent.planning` · `meeting.started` · `task.completed` · `issue.found`
 
 ---
 
@@ -131,8 +131,8 @@ useRealtimeSync (외부 세션 수신 시)
 | live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
 | 기본 동작 | ✅ `ENABLE_LIVE_LLM=false` 이면 mock fallback |
 | 서버 전용 키 | ✅ `ANTHROPIC_API_KEY`는 `NEXT_PUBLIC_` 없이 서버에서만 사용 |
-| Planner UI 테스트 | ✅ ActionBar `Ask Planner` 버튼 |
-| Supabase events 저장 | ✅ `agent.message` 이벤트 경로로 summary 저장 시도, 실패해도 앱 유지 |
+| Planner UI 테스트 | ✅ ActionBar `Plan with Claude` 버튼 |
+| Supabase events 저장 | ✅ `agent.planning` 이벤트로 summary/steps 저장 시도, 실패해도 앱 유지 |
 | LLM 공통 타입 | ✅ `src/lib/llm/types.ts` |
 | Mock Claude 응답 | ✅ `src/lib/llm/mockClaude.ts` — 네트워크/API 호출 없음 |
 | Claude client | ✅ `src/lib/llm/claudeClient.ts` — `server-only`, timeout/max token 제한, 안전 fallback |

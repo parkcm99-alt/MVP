@@ -10,6 +10,7 @@ const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
   meeting: { color: '#34D399', prefix: '[MTG]'  },
   chat:    { color: '#F97316', prefix: '[CHAT]' },
   review:  { color: '#C084FC', prefix: '[REV]'  },
+  planning:{ color: '#93C5FD', prefix: '[PLAN]' },
   system:  { color: '#94A3B8', prefix: '[SYS]'  },
 };
 

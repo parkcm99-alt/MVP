@@ -93,7 +93,7 @@ create table public.events (
   agent_id    text        not null,   -- AgentRole
   agent_name  text        not null,
   agent_color text        not null,
-  type        text        not null,   -- task | meeting | chat | system | review
+  type        text        not null,   -- task | meeting | chat | system | review | planning
   message     text        not null,
   metadata    jsonb,                  -- 자유 형식 추가 데이터
   timestamp   timestamptz not null default now()
