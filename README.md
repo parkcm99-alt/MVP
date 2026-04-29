@@ -6,7 +6,7 @@
 
 ## Current MVP Status
 
-> **Production Ready** — Vercel 배포 + Supabase Realtime 동기화 완료 (2025-04)
+> **Production Ready** — Vercel 배포 + Supabase Realtime 동기화 완료 (2026-04)
 
 | 항목 | 상태 |
 |------|------|
@@ -18,6 +18,7 @@
 | 멀티 브라우저 Realtime 동기화 | ✅ 테스트 완료 |
 | Event Log KST 시간 표시 | ✅ 확인 |
 | MOCK MODE fallback | ✅ 동작 |
+| Claude API 연결 전 준비 | ✅ mock 유지, 실제 호출 비활성화 |
 
 ---
 
@@ -113,6 +114,31 @@ useRealtimeSync (외부 세션 수신 시)
 | SUPABASE LIVE | 채널 구독 성공, 모든 쓰기 정상 |
 | SUPABASE PARTIAL ERR | 채널은 OK, 일부 upsert 실패 |
 | SUPABASE ERROR | 채널 연결 실패 |
+
+---
+
+## Claude API Pre-Connection Status
+
+> 실제 Claude API 호출은 아직 비활성화되어 있으며, MVP는 계속 mock simulation으로 동작합니다.
+
+| 항목 | 상태 |
+|------|------|
+| `.env.example` Claude placeholder | ✅ `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` 추가 |
+| LLM 공통 타입 | ✅ `src/lib/llm/types.ts` |
+| Mock Claude 응답 | ✅ `src/lib/llm/mockClaude.ts` — 네트워크/API 호출 없음 |
+| Claude client placeholder | ✅ `src/lib/llm/claudeClient.ts` — 서버 전용, 실제 호출 차단 |
+| 역할별 시스템 프롬프트 | ✅ `src/lib/agents/prompts.ts` |
+| 실제 Anthropic API 호출 | 🚫 Phase 4 전까지 비활성화 |
+| OpenAI / AgentOps / LangGraph / CrewAI 실연결 | 🚫 아직 비활성화 |
+
+### Claude 환경변수
+
+```bash
+ANTHROPIC_API_KEY=
+CLAUDE_MODEL=claude-sonnet-4-6
+```
+
+`ANTHROPIC_API_KEY`를 비워두면 비용이 발생하는 실제 Claude 호출 없이 mock simulation을 유지합니다.
 
 ---
 
@@ -277,6 +303,12 @@ src/
 │   │   ├── persistence.ts    # upsertAgent / upsertTask
 │   │   └── errorTracker.ts   # 퍼시스턴스 에러 pub/sub
 │   ├── time.ts               # formatKstTime — UTC → KST 변환
+│   ├── agents/
+│   │   └── prompts.ts        # Planner/Architect/Developer/Reviewer/QA 시스템 프롬프트 초안
+│   ├── llm/
+│   │   ├── types.ts          # LLM provider/message/response/prompt 타입
+│   │   ├── mockClaude.ts     # 비용 없는 Claude mock 응답
+│   │   └── claudeClient.ts   # 서버 전용 Claude placeholder (실제 호출 비활성화)
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   └── agentops/
