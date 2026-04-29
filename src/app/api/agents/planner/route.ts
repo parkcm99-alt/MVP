@@ -55,24 +55,78 @@ function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false):
   return cleaned.length > 0 ? cleaned : fallback;
 }
 
-function parsePlannerContent(llm: LlmResponse): PlannerAgentResponse {
-  try {
-    const parsed = JSON.parse(llm.content) as Record<string, unknown>;
-    const fallback = safePlannerResponse({ provider: llm.provider });
+function stripMarkdownCodeFence(content: string): string {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return (fenced?.[1] ?? trimmed).trim();
+}
 
-    return safePlannerResponse({
-      provider: llm.provider,
-      summary: normalizeText(parsed.summary, fallback.summary),
-      steps: arrayOfStrings(parsed.steps, fallback.steps),
-      risks: arrayOfStrings(parsed.risks, fallback.risks, true).slice(0, 3),
-      nextAgent: normalizeText(parsed.nextAgent, fallback.nextAgent).toLowerCase(),
-    });
-  } catch {
-    return safePlannerResponse({
-      provider: llm.provider,
-      summary: normalizeText(llm.content, 'Planner 응답을 정리하지 못해 mock summary로 대체했습니다.'),
-    });
+function extractJsonObject(content: string): string {
+  const unfenced = stripMarkdownCodeFence(content);
+  const firstBrace = unfenced.indexOf('{');
+  const lastBrace = unfenced.lastIndexOf('}');
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return unfenced;
   }
+
+  return unfenced.slice(firstBrace, lastBrace + 1);
+}
+
+function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
+  const fallback = safePlannerResponse({
+    provider: llm.provider,
+    summary: normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
+  });
+
+  try {
+    const parsed = JSON.parse(extractJsonObject(llm.content)) as Record<string, unknown>;
+    const summary = normalizeText(parsed.summary, '');
+    const steps = arrayOfStrings(parsed.steps, [], true);
+    const risks = arrayOfStrings(parsed.risks, [], true).slice(0, 3);
+    const nextAgent = normalizeText(parsed.nextAgent, '');
+
+    if (!summary || steps.length === 0 || !nextAgent) {
+      return { response: fallback, debugReason: 'json_parse_failed' };
+    }
+
+    return {
+      response: safePlannerResponse({
+        provider: llm.provider,
+        summary,
+        steps,
+        risks,
+        nextAgent: nextAgent.toLowerCase(),
+      }),
+    };
+  } catch {
+    return {
+      response: fallback,
+      debugReason: 'json_parse_failed',
+    };
+  }
+}
+
+function buildPlannerSystemPrompt(basePrompt: string): string {
+  return [
+    basePrompt,
+    'You must return raw JSON only.',
+    'Do not use markdown.',
+    'Do not wrap the response in ```json fences.',
+    'Do not add prose before or after the JSON object.',
+    'The entire response must be parseable by JSON.parse.',
+    'Use exactly this JSON object shape:',
+    '{"summary":"string","steps":["string"],"risks":["string"],"nextAgent":"architect"}',
+    'Use nextAgent="architect" unless the task is already fully planned.',
+  ].join('\n');
+}
+
+function respondWithPlannerContent(llm: LlmResponse) {
+  const parsed = parsePlannerContent(llm);
+  return Response.json(withDevDebug(
+    parsed.response,
+    parsed.debugReason ?? llm.fallbackReason,
+  ));
 }
 
 async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
@@ -135,12 +189,7 @@ export async function POST(request: Request) {
   const plannerPrompt = getAgentRolePrompt(ROLE);
   const llm = await claudeClient.complete({
     agentRole: ROLE,
-    systemPrompt: [
-      plannerPrompt.systemPrompt,
-      'Return only JSON that matches this exact shape:',
-      '{"summary":"string","steps":["string"],"risks":["string"],"nextAgent":"architect"}',
-      'Use nextAgent="architect" unless the task is already fully planned.',
-    ].join('\n'),
+    systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt),
     messages: [
       {
         role: 'user',
@@ -148,11 +197,12 @@ export async function POST(request: Request) {
           `Task title: ${taskTitle}`,
           `Task description: ${taskDescription}`,
           'Create a short planning summary, 2-4 execution steps, 0-3 risks, and the next agent.',
+          'Return only the JSON object. No markdown. No code fences.',
         ].join('\n'),
       },
     ],
     maxTokens: 320,
   });
 
-  return Response.json(withDevDebug(parsePlannerContent(llm), llm.fallbackReason));
+  return respondWithPlannerContent(llm);
 }
