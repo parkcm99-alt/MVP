@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
-import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
+import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
 interface ActionBtnProps {
@@ -61,10 +61,76 @@ function buildStepSummary(steps: string[]): string {
   return steps.map((step, index) => `${index + 1}. ${step}`).join(' ');
 }
 
+function normalizeFingerprintPart(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function buildPlannerResponseFingerprint(taskTitle: string, summary: string, steps: string[]): string {
+  return [
+    normalizeFingerprintPart(taskTitle),
+    normalizeFingerprintPart(summary),
+    ...steps.map(normalizeFingerprintPart),
+  ].join('|');
+}
+
+function inferStepAssignee(step: string): AgentRole {
+  const text = step.toLowerCase();
+
+  if (/(리뷰|검토|review|inspect|audit)/i.test(text)) {
+    return 'reviewer';
+  }
+  if (/(테스트|검증|qa|품질|회귀|test|verify|validate|quality)/i.test(text)) {
+    return 'qa';
+  }
+  if (/(설계|구조|아키텍처|architecture|architect|system design|data flow)/i.test(text)) {
+    return 'architect';
+  }
+  if (/(구현|api|코드|개발|프론트|백엔드|implement|code|develop|endpoint)/i.test(text)) {
+    return 'developer';
+  }
+  if (/(기획|요구사항|계획|범위|우선순위|plan|requirement|scope|prioritize)/i.test(text)) {
+    return 'planner';
+  }
+
+  return 'planner';
+}
+
+function createTasksFromPlannerSteps(
+  responseFingerprint: string,
+  sourceTaskTitle: string,
+  sourcePriority: TaskPriority,
+  steps: string[],
+  generatedFingerprints: Set<string>,
+): number {
+  if (generatedFingerprints.has(responseFingerprint)) return 0;
+
+  const cleanSteps = steps
+    .map(step => step.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (cleanSteps.length === 0) return 0;
+
+  const store = useSimStore.getState();
+  cleanSteps.forEach((step, index) => {
+    store.addTask({
+      title: step.length > 72 ? `${step.slice(0, 69)}...` : step,
+      description: `Planner generated from "${sourceTaskTitle}" step ${index + 1}`,
+      assignedTo: inferStepAssignee(step),
+      status: 'backlog',
+      priority: sourcePriority,
+    });
+  });
+
+  generatedFingerprints.add(responseFingerprint);
+  return cleanSteps.length;
+}
+
 export default function ActionBar() {
   const isRunning = useSimStore(s => s.isRunning);
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
+  const generatedPlannerResponses = useRef<Set<string>>(new Set());
 
   async function askPlanner() {
     if (plannerBusy) return;
@@ -94,6 +160,15 @@ export default function ActionBar() {
       const summary = result.summary || 'Planner 응답이 비어 있습니다.';
       const steps = Array.isArray(result.steps) ? result.steps : [];
       const speech = `${providerLabel}: ${summary}`.slice(0, 72);
+      const sourcePriority = task?.priority ?? 'medium';
+      const responseFingerprint = buildPlannerResponseFingerprint(taskTitle, summary, steps);
+      const createdTaskCount = createTasksFromPlannerSteps(
+        responseFingerprint,
+        taskTitle,
+        sourcePriority,
+        steps,
+        generatedPlannerResponses.current,
+      );
 
       eventBus.emit('agent.planning', {
         agentId: 'planner',
@@ -101,7 +176,7 @@ export default function ActionBar() {
           summary,
           steps,
           taskTitle,
-          taskPriority: task?.priority ?? 'medium',
+          taskPriority: sourcePriority,
           provider: result.provider,
           risks: result.risks,
           nextAgent: result.nextAgent,
@@ -112,6 +187,15 @@ export default function ActionBar() {
         data: {
           message: `Steps: ${buildStepSummary(steps)}`,
           taskTitle,
+          provider: result.provider,
+        },
+      });
+      eventBus.emit('agent.message', {
+        agentId: 'planner',
+        data: {
+          message: `Planner가 ${createdTaskCount}개의 하위 작업을 생성했습니다`,
+          taskTitle,
+          generatedTaskCount: createdTaskCount,
           provider: result.provider,
         },
       });
