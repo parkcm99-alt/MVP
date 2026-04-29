@@ -3,6 +3,7 @@ import TaskQueue from '@/components/panels/TaskQueue';
 import AgentStatus from '@/components/panels/AgentStatus';
 import EventLog from '@/components/panels/EventLog';
 import WorkflowGraph from '@/components/command-center/WorkflowGraph';
+import ConnectionStatus from '@/components/debug/ConnectionStatus';
 
 export default function Page() {
   return (
@@ -10,7 +11,10 @@ export default function Page() {
       {/* title bar */}
       <header className="app-titlebar">
         <h1>⬛ AI AGENT OFFICE SIMULATOR</h1>
-        <span className="version">v0.2.0-alpha · VISUAL LAYER · MOCK MODE</span>
+        <div className="titlebar-right">
+          <ConnectionStatus />
+          <span className="version">v0.2.0-alpha</span>
+        </div>
       </header>
 
       {/* main body */}

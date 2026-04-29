@@ -65,38 +65,44 @@ export type AgentUpdate  = Partial<Omit<AgentRow,  'id' | 'session_id'>>;
 export type TaskInsert   = Omit<TaskRow,   'created_at' | 'updated_at'> & Partial<Pick<TaskRow,   'created_at' | 'updated_at'>>;
 export type TaskUpdate   = Partial<Omit<TaskRow,   'id' | 'session_id' | 'created_at'>>;
 
-export type EventInsert  = Omit<EventRow,  'timestamp'> & Partial<Pick<EventRow,  'timestamp'>>;
+export type EventInsert  = Omit<EventRow, 'id' | 'timestamp'> & Partial<Pick<EventRow, 'id' | 'timestamp'>>;
 
 export type AgentTraceInsert = Omit<AgentTraceRow, 'created_at'> & Partial<Pick<AgentTraceRow, 'created_at'>>;
 
 // ── Database shape (passed to createClient<Database>) ────────────────────────
+// Each table must include Relationships to satisfy supabase-js GenericTable.
 
 export interface Database {
   public: {
     Tables: {
       agents: {
-        Row:    AgentRow;
-        Insert: AgentInsert;
-        Update: AgentUpdate;
+        Row:           AgentRow;
+        Insert:        AgentInsert;
+        Update:        AgentUpdate;
+        Relationships: [];
       };
       tasks: {
-        Row:    TaskRow;
-        Insert: TaskInsert;
-        Update: TaskUpdate;
+        Row:           TaskRow;
+        Insert:        TaskInsert;
+        Update:        TaskUpdate;
+        Relationships: [];
       };
       events: {
-        Row:    EventRow;
-        Insert: EventInsert;
-        Update: Partial<EventRow>;
+        Row:           EventRow;
+        Insert:        EventInsert;
+        Update:        Partial<EventRow>;
+        Relationships: [];
       };
       agent_traces: {
-        Row:    AgentTraceRow;
-        Insert: AgentTraceInsert;
-        Update: Partial<AgentTraceRow>;
+        Row:           AgentTraceRow;
+        Insert:        AgentTraceInsert;
+        Update:        Partial<AgentTraceRow>;
+        Relationships: [];
       };
     };
-    Views:     Record<string, never>;
-    Functions: Record<string, never>;
-    Enums:     Record<string, never>;
+    Views:          Record<never, never>;   // no views — prevents overload ambiguity in from()
+    Functions:      Record<never, never>;   // no functions
+    Enums:          Record<never, never>;
+    CompositeTypes: Record<never, never>;
   };
 }

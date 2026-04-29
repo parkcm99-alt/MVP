@@ -1,17 +1,18 @@
 /**
- * eventBus — typed mock event layer
+ * eventBus — typed event layer
  *
- * Emits named events and writes them into the Zustand store (SimEvent).
- * Transport hooks:
- *   - Supabase Realtime: realtimeAdapter.broadcast() (no-op in mock mode, live when configured)
- *   - AgentOps:          TODO — agentops.trackEvent() call (Milestone 3)
+ * emit() does two things in order:
+ *   1. Writes to Zustand store (always, synchronous)
+ *   2. Calls realtimeAdapter.broadcast() (async, no-op in mock mode)
+ *
+ * This order guarantees the UI is never waiting on the network.
  */
 
 import { useSimStore } from '@/store/simulationStore';
 import { realtimeAdapter } from '@/lib/supabase/realtime';
 import type { BusEventType, BusPayload, EventType } from '@/types';
 
-// Maps bus event types → display category used in EventLog
+// Maps bus event types → display category for EventLog / events table
 const BUS_TO_DISPLAY: Record<BusEventType, EventType> = {
   'task.created':          'task',
   'agent.assigned':        'task',
@@ -41,21 +42,29 @@ function formatMessage(type: BusEventType, payload: BusPayload): string {
 
 export const eventBus = {
   emit(type: BusEventType, payload: BusPayload): void {
-    const store = useSimStore.getState();
-    const agent = store.agents[payload.agentId];
+    const store     = useSimStore.getState();
+    const agent     = store.agents[payload.agentId];
+    const eventType = BUS_TO_DISPLAY[type];
+    const message   = formatMessage(type, payload);
 
+    // 1. Zustand store — always, synchronous, drives the UI
     store.addEvent({
       agentId:    payload.agentId,
       agentName:  agent.name,
       agentColor: agent.primaryColor,
-      type:       BUS_TO_DISPLAY[type],
-      message:    formatMessage(type, payload),
+      type:       eventType,
+      message,
     });
 
-    // Supabase Realtime broadcast (no-op in mock mode, live when NEXT_PUBLIC_SUPABASE_URL is set)
-    void realtimeAdapter.broadcast(type, payload);
+    // 2. Supabase insert (no-op when NEXT_PUBLIC_SUPABASE_URL is not set)
+    void realtimeAdapter.broadcast(type, payload, {
+      message,
+      eventType,
+      agentName:  agent.name,
+      agentColor: agent.primaryColor,
+    });
 
     // TODO (Milestone 3): AgentOps hook
-    // agentops.trackEvent({ agentId: payload.agentId, eventName: type, payload: payload.data ?? {}, timestamp: Date.now() });
+    // agentops.trackEvent({ agentId: payload.agentId, eventName: type, ... });
   },
 };

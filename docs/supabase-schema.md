@@ -1,17 +1,25 @@
 # Supabase Schema Design
 
-AI Agent Office Simulator — Milestone 3 데이터베이스 설계
+AI Agent Office Simulator — 데이터베이스 설계
+
+> **실행 순서**: 아래 SQL을 Supabase SQL Editor에서 순서대로 실행하세요.
 
 ---
 
-## 테이블 목록
+## 0. 공통 함수
 
-| 테이블 | 목적 |
-|--------|------|
-| `agents` | 에이전트 현재 상태 스냅샷 (session별) |
-| `tasks` | 태스크 목록 및 상태 추적 |
-| `events` | 시뮬레이션 이벤트 로그 (append-only) |
-| `agent_traces` | LLM 호출 트레이스 (Milestone 3 이후 사용) |
+`moddatetime` 익스텐션 없이 `updated_at`을 자동 갱신하는 트리거 함수입니다.
+모든 `updated_at` 트리거에서 사용합니다.
+
+```sql
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+```
 
 ---
 
@@ -36,12 +44,10 @@ create table public.agents (
   primary key (id, session_id)
 );
 
--- 변경 시 자동으로 updated_at 갱신
 create trigger agents_updated_at
   before update on public.agents
-  for each row execute function moddatetime(updated_at);
+  for each row execute function public.set_updated_at();
 
--- Realtime 활성화
 alter publication supabase_realtime add table public.agents;
 ```
 
@@ -69,7 +75,7 @@ create index tasks_assigned_to on public.tasks (assigned_to);
 
 create trigger tasks_updated_at
   before update on public.tasks
-  for each row execute function moddatetime(updated_at);
+  for each row execute function public.set_updated_at();
 
 alter publication supabase_realtime add table public.tasks;
 ```
@@ -97,7 +103,6 @@ create index events_session_id      on public.events (session_id);
 create index events_agent_id        on public.events (agent_id);
 create index events_timestamp       on public.events (timestamp desc);
 
--- 이벤트는 read-only broadcast로만 사용
 alter publication supabase_realtime add table public.events;
 ```
 
@@ -127,40 +132,40 @@ create index agent_traces_agent_id   on public.agent_traces (agent_id);
 
 ---
 
-## Row Level Security (RLS)
-
-모든 테이블에 RLS 활성화. 최초 단계에서는 anon read 허용.
+## 5. Row Level Security (RLS)
 
 ```sql
 -- agents
 alter table public.agents  enable row level security;
-create policy "anon read" on public.agents  for select using (true);
+create policy "anon read"   on public.agents  for select using (true);
+create policy "anon insert" on public.agents  for insert with check (true);
+create policy "anon update" on public.agents  for update using (true);
 
 -- tasks
 alter table public.tasks   enable row level security;
-create policy "anon read" on public.tasks   for select using (true);
+create policy "anon read"   on public.tasks   for select using (true);
+create policy "anon insert" on public.tasks   for insert with check (true);
+create policy "anon update" on public.tasks   for update using (true);
 
--- events
+-- events: insert 필수 — 클라이언트가 anon key로 이벤트를 저장
 alter table public.events  enable row level security;
-create policy "anon read" on public.events  for select using (true);
+create policy "anon read"   on public.events  for select using (true);
+create policy "anon insert" on public.events  for insert with check (true);
 
--- agent_traces (read-only from client — write via service role only)
+-- agent_traces: 클라이언트 read only, write는 service role 전용
 alter table public.agent_traces enable row level security;
-create policy "anon read" on public.agent_traces for select using (true);
+create policy "anon read"   on public.agent_traces for select using (true);
 ```
 
 ---
 
 ## 연결 체크리스트
 
-Milestone 3 시작 전:
-
-- [ ] Supabase 프로젝트 생성
-- [ ] `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 설정
-- [ ] SQL Editor에서 위 스키마 실행
-- [ ] `supabase gen types typescript --project-id <ref>` 로 `src/lib/supabase/types.ts` 재생성
-- [ ] `SupabaseRealtimeAdapter.broadcast()` / `subscribe()` stub 주석 해제
-- [ ] `persistEvent()` in `src/lib/realtime/index.ts` 구현
+- [x] Supabase 프로젝트 생성
+- [x] `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 설정
+- [x] SQL Editor에서 위 스키마 실행
+- [ ] `supabase gen types typescript --project-id <ref>` 로 `src/lib/supabase/types.ts` 재생성 (선택)
+- [x] `SupabaseRealtimeAdapter` 구현 완료 (자동 활성화)
 
 ---
 
@@ -168,6 +173,7 @@ Milestone 3 시작 전:
 
 | 채널명 | 목적 | 이벤트 |
 |--------|------|--------|
-| `sim-events` | 에이전트 이벤트 브로드캐스트 | BusEventType 전체 |
-| `agent-state` | 에이전트 상태 실시간 동기화 | postgres_changes on agents |
-| `task-updates` | 태스크 변경 동기화 | postgres_changes on tasks |
+| `sim-events-changes` | events 테이블 INSERT 구독 (중복 방지: session_id 필터) | postgres_changes INSERT |
+| `_conn_check` | 연결 상태 확인 전용 (ConnectionStatus 컴포넌트) | subscribe state |
+| `agent-state` (예정) | 에이전트 상태 실시간 동기화 | postgres_changes on agents |
+| `task-updates` (예정) | 태스크 변경 동기화 | postgres_changes on tasks |
