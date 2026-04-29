@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@supabase/supabase-js": "^2.105.1",
     "@xyflow/react": "^12.10.2",
     "next": "16.2.4",

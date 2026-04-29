@@ -13,7 +13,7 @@ import type { AgentRole } from '@/types';
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 /** Which underlying provider is active. */
-export type LlmProvider = 'mock' | 'anthropic';
+export type LlmProvider = 'mock' | 'claude';
 
 // ── Message ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +63,9 @@ export interface LlmResponse {
 
   /** Model name used (e.g. 'claude-sonnet-4-6' or 'mock'). */
   model:      string;
+
+  /** Sanitized fallback reason, never raw provider errors or secrets. */
+  fallbackReason?: string;
 }
 
 // ── Agent role prompt ─────────────────────────────────────────────────────────
@@ -73,4 +76,14 @@ export interface AgentRolePrompt {
   systemPrompt: string;
   /** Short label shown in the UI trace card. */
   label:        string;
+}
+
+export interface PlannerAgentResponse {
+  ok: boolean;
+  provider: 'mock' | 'claude';
+  role: 'planner';
+  summary: string;
+  steps: string[];
+  risks: string[];
+  nextAgent: string;
 }

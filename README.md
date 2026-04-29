@@ -18,7 +18,7 @@
 | 멀티 브라우저 Realtime 동기화 | ✅ 테스트 완료 |
 | Event Log KST 시간 표시 | ✅ 확인 |
 | MOCK MODE fallback | ✅ 동작 |
-| Claude API 연결 전 준비 | ✅ mock 유지, 실제 호출 비활성화 |
+| Claude API Planner 1단계 | ✅ 서버 route + mock fallback, live 기본 OFF |
 
 ---
 
@@ -51,6 +51,7 @@
 - **Start Sprint** — 48초 루프 시나리오 시작
 - **Call Meeting** — 전체 미팅 소집
 - **Add Task** — 랜덤 태스크 큐에 추가
+- **Ask Planner** — Planner API route 테스트 (기본값 mock fallback)
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
@@ -117,28 +118,48 @@ useRealtimeSync (외부 세션 수신 시)
 
 ---
 
-## Claude API Pre-Connection Status
+## Claude API Planner Stage 1
 
-> 실제 Claude API 호출은 아직 비활성화되어 있으며, MVP는 계속 mock simulation으로 동작합니다.
+> Planner 에이전트만 서버 전용 API route로 Claude live 호출을 사용할 수 있습니다. 기본값은 비용 방지를 위해 mock fallback입니다.
 
 | 항목 | 상태 |
 |------|------|
-| `.env.example` Claude placeholder | ✅ `ANTHROPIC_API_KEY`, `CLAUDE_MODEL` 추가 |
+| `@anthropic-ai/sdk` dependency | ✅ 추가 |
+| Planner API route | ✅ `POST /api/agents/planner` |
+| 요청 body | ✅ `{ taskTitle, taskDescription }` |
+| 응답 형식 | ✅ `ok`, `provider`, `role`, `summary`, `steps`, `risks`, `nextAgent` |
+| live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
+| 기본 동작 | ✅ `ENABLE_LIVE_LLM=false` 이면 mock fallback |
+| 서버 전용 키 | ✅ `ANTHROPIC_API_KEY`는 `NEXT_PUBLIC_` 없이 서버에서만 사용 |
+| Planner UI 테스트 | ✅ ActionBar `Ask Planner` 버튼 |
+| Supabase events 저장 | ✅ `agent.message` 이벤트 경로로 summary 저장 시도, 실패해도 앱 유지 |
 | LLM 공통 타입 | ✅ `src/lib/llm/types.ts` |
 | Mock Claude 응답 | ✅ `src/lib/llm/mockClaude.ts` — 네트워크/API 호출 없음 |
-| Claude client placeholder | ✅ `src/lib/llm/claudeClient.ts` — 서버 전용, 실제 호출 차단 |
+| Claude client | ✅ `src/lib/llm/claudeClient.ts` — `server-only`, timeout/max token 제한, 안전 fallback |
 | 역할별 시스템 프롬프트 | ✅ `src/lib/agents/prompts.ts` |
-| 실제 Anthropic API 호출 | 🚫 Phase 4 전까지 비활성화 |
 | OpenAI / AgentOps / LangGraph / CrewAI 실연결 | 🚫 아직 비활성화 |
 
 ### Claude 환경변수
 
 ```bash
 ANTHROPIC_API_KEY=
+ENABLE_LIVE_LLM=false
+CLAUDE_MODEL=
+```
+
+`ANTHROPIC_API_KEY`는 서버 전용입니다. `NEXT_PUBLIC_ANTHROPIC_API_KEY` 같은 브라우저 노출 변수는 만들지 않습니다.
+
+### 실제 호출 켜기
+
+`.env.local` 또는 Vercel Environment Variables에 아래처럼 설정합니다.
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+ENABLE_LIVE_LLM=true
 CLAUDE_MODEL=claude-sonnet-4-6
 ```
 
-`ANTHROPIC_API_KEY`를 비워두면 비용이 발생하는 실제 Claude 호출 없이 mock simulation을 유지합니다.
+`ENABLE_LIVE_LLM=false`이거나 `ANTHROPIC_API_KEY`가 비어 있으면 항상 mock 응답을 반환합니다. live 호출은 비용이 발생할 수 있으므로 테스트할 때만 `true`로 바꾸세요.
 
 ---
 
@@ -248,9 +269,9 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 - AgentOps SDK 연동
 
 ### Phase 4 — Claude API Single-Agent Integration
-- Claude API (`claude-sonnet-4-6`) 실제 호출
-- Planner 에이전트 단일 연동 (시스템 프롬프트 + 대화 히스토리)
-- 에이전트 메시지가 실제 LLM 응답으로 대체
+- Planner API route 1단계 완료 (`ENABLE_LIVE_LLM` gate + mock fallback)
+- 다음 단계: Planner 응답을 메인 시뮬레이션 루프에 점진 연결
+- 에이전트 클릭 카드 Trace 섹션에 LLM latency/token 표시
 
 ### Phase 5 — LangGraph / CrewAI Orchestration
 - 5 에이전트 전체 LangGraph 워크플로우 실연결
@@ -271,6 +292,8 @@ src/
 ├── app/
 │   ├── page.tsx              # 루트 레이아웃 — office-col / side-col 배치
 │   ├── layout.tsx
+│   ├── api/
+│   │   └── agents/planner/route.ts  # Planner 서버 전용 Claude/mock API route
 │   └── globals.css           # 전체 CSS (픽셀 테마, 애니메이션, 패널 스타일)
 │
 ├── components/
@@ -308,7 +331,7 @@ src/
 │   ├── llm/
 │   │   ├── types.ts          # LLM provider/message/response/prompt 타입
 │   │   ├── mockClaude.ts     # 비용 없는 Claude mock 응답
-│   │   └── claudeClient.ts   # 서버 전용 Claude placeholder (실제 호출 비활성화)
+│   │   └── claudeClient.ts   # 서버 전용 Claude SDK client + 안전 fallback
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   └── agentops/
@@ -337,6 +360,6 @@ src/
 | 워크플로우 그래프 | @xyflow/react (React Flow) |
 | 실시간 DB | Supabase Realtime — events/agents/tasks 3-table 동기화 완료 |
 | 배포 | Vercel (프로덕션) |
-| 미래 LLM | Anthropic SDK (`@anthropic-ai/sdk`) — Phase 4 예정 |
+| LLM | Anthropic SDK (`@anthropic-ai/sdk`) — Planner route만 live 옵션, 기본 mock |
 | 미래 관측성 | AgentOps — Phase 3 예정 |
 | 미래 워크플로우 | LangGraph / CrewAI — Phase 5 예정 |
