@@ -6,6 +6,8 @@ import { assignPlannerStep } from '@/lib/agents/plannerStepAssignment';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
+import { getSessionId } from '@/lib/supabase/session';
+import { insertAgentTrace } from '@/lib/supabase/traces';
 import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -115,6 +117,18 @@ function createTasksFromPlannerSteps(
     ),
   );
 
+  createdTasks.forEach(task => {
+    void insertAgentTrace({
+      agentId: 'planner',
+      traceType: 'handoff',
+      metadata: {
+        source_agent: 'planner',
+        target_agent: task.assignedTo ?? 'planner',
+        task_title: task.title,
+      },
+    });
+  });
+
   generatedFingerprints.add(responseFingerprint);
   return createdTasks;
 }
@@ -155,6 +169,15 @@ function schedulePlannerGeneratedWorkflow(
       eventBus.emit('task.started', {
         agentId,
         data: { task: task.title, taskId: task.id, source: 'planner-generated' },
+      });
+      void insertAgentTrace({
+        agentId,
+        traceType: 'decision',
+        metadata: {
+          task_title: task.title,
+          status: 'in_progress',
+          assigned_to: agentId,
+        },
       });
       store.updateTask(task.id, { status: 'in_progress' });
     }, startDelay));
@@ -229,7 +252,7 @@ export default function ActionBar() {
       const response = await fetch('/api/agents/planner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskTitle, taskDescription }),
+        body: JSON.stringify({ taskTitle, taskDescription, sessionId: getSessionId() }),
       });
       const result = await response.json() as PlannerAgentResponse;
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Planner';

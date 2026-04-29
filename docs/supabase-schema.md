@@ -152,9 +152,11 @@ alter table public.events  enable row level security;
 create policy "anon read"   on public.events  for select using (true);
 create policy "anon insert" on public.events  for insert with check (true);
 
--- agent_traces: 클라이언트 read only, write는 service role 전용
+-- agent_traces: MVP trace 기록용 insert 허용
+-- API key/secret은 저장하지 않고, update/delete는 열지 않습니다.
 alter table public.agent_traces enable row level security;
 create policy "anon read"   on public.agent_traces for select using (true);
+create policy "anon insert" on public.agent_traces for insert with check (true);
 ```
 
 ---

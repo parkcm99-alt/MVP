@@ -162,6 +162,18 @@ CLAUDE_MODEL=claude-sonnet-4-6
 
 `ENABLE_LIVE_LLM=false`이거나 `ANTHROPIC_API_KEY`가 비어 있으면 항상 mock 응답을 반환합니다. live 호출은 비용이 발생할 수 있으므로 테스트할 때만 `true`로 바꾸세요.
 
+### Agent Trace 기록
+
+`agent_traces` 테이블은 AgentOps 실제 연동 전까지 내부 관측 로그로 사용합니다. trace 저장은 실패해도 앱 흐름을 막지 않으며, API key/secret 같은 민감정보는 저장하지 않습니다.
+
+| trace_type | 기록 시점 |
+|------------|-----------|
+| `llm_call` | Planner가 서버 route에서 Claude live 호출에 성공했을 때 token/latency/model 기록 |
+| `handoff` | Planner 응답 steps로 만든 하위 task를 담당 에이전트에게 넘길 때 기록 |
+| `decision` | Planner-generated task를 담당 에이전트가 시작할 때 기록 |
+
+이 구조는 나중에 AgentOps SDK를 붙일 때 동일한 trace 이벤트를 외부 관측 시스템으로 확장할 수 있도록 만든 scaffolding입니다. 현재는 OpenAI, AgentOps, LangGraph, CrewAI 실제 연결을 하지 않습니다.
+
 ---
 
 ## Realtime Sync Test Result
@@ -264,7 +276,7 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 ## Next Roadmap
 
 ### Phase 3 — AgentOps Tracing
-- `agent_traces` 테이블 실데이터 연결
+- `agent_traces` 테이블 실데이터 연결 완료 (`llm_call`, `handoff`, `decision`)
 - LLM 호출 레이턴시·토큰 수 시각화
 - 에이전트 클릭 카드 Trace 섹션 실연결
 - AgentOps SDK 연동
@@ -325,6 +337,7 @@ src/
 │   │   ├── types.ts          # DB 타입 정의
 │   │   ├── realtime.ts       # RealtimeAdapter (Mock / Supabase)
 │   │   ├── persistence.ts    # upsertAgent / upsertTask
+│   │   ├── traces.ts         # agent_traces insert 유틸
 │   │   └── errorTracker.ts   # 퍼시스턴스 에러 pub/sub
 │   ├── time.ts               # formatKstTime — UTC → KST 변환
 │   ├── agents/

@@ -1,6 +1,7 @@
 import { getAgentRolePrompt } from '@/lib/agents/prompts';
 import { claudeClient } from '@/lib/llm/claudeClient';
 import { mockClaude } from '@/lib/llm/mockClaude';
+import { insertAgentTrace } from '@/lib/supabase/traces';
 import type { LlmResponse, PlannerAgentResponse } from '@/lib/llm/types';
 
 export const runtime = 'nodejs';
@@ -9,12 +10,17 @@ export const dynamic = 'force-dynamic';
 interface PlannerRequestBody {
   taskTitle?: unknown;
   taskDescription?: unknown;
+  sessionId?: unknown;
 }
 
 const ROLE = 'planner' as const;
 
 function normalizeText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 600) : fallback;
+}
+
+function normalizeSessionId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function safePlannerResponse(
@@ -129,6 +135,28 @@ function respondWithPlannerContent(llm: LlmResponse) {
   ));
 }
 
+async function recordPlannerLlmTrace(
+  llm: LlmResponse,
+  taskTitle: string,
+  sessionId?: string,
+): Promise<void> {
+  if (llm.provider !== 'claude') return;
+
+  await insertAgentTrace({
+    sessionId,
+    agentId: ROLE,
+    traceType: 'llm_call',
+    inputTokens: llm.inputTokens ?? null,
+    outputTokens: llm.outputTokens ?? null,
+    latencyMs: llm.latencyMs ?? null,
+    model: llm.model ?? null,
+    metadata: {
+      provider: llm.provider,
+      task_title: taskTitle,
+    },
+  });
+}
+
 async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
   const mock = await mockClaude.complete({
     agentRole: ROLE,
@@ -167,6 +195,7 @@ export async function POST(request: Request) {
     body.taskDescription,
     'Review the current sprint and suggest the safest next handoff.',
   );
+  const sessionId = normalizeSessionId(body.sessionId);
 
   const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
   const liveEnabled = normalizedLiveFlag === 'true';
@@ -203,6 +232,8 @@ export async function POST(request: Request) {
     ],
     maxTokens: 320,
   });
+
+  await recordPlannerLlmTrace(llm, taskTitle, sessionId);
 
   return respondWithPlannerContent(llm);
 }
