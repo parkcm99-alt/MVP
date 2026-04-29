@@ -11,6 +11,7 @@ interface PlannerRequestBody {
   taskTitle?: unknown;
   taskDescription?: unknown;
   sessionId?: unknown;
+  session_id?: unknown;
 }
 
 const ROLE = 'planner' as const;
@@ -45,9 +46,15 @@ function safePlannerResponse(
 function withDevDebug(
   response: PlannerAgentResponse,
   debugReason?: string,
+  traceRecorded?: boolean,
 ): PlannerAgentResponse {
-  if (process.env.NODE_ENV === 'production' || !debugReason) return response;
-  return { ...response, debugReason };
+  if (process.env.NODE_ENV === 'production') return response;
+
+  return {
+    ...response,
+    ...(debugReason ? { debugReason } : {}),
+    ...(typeof traceRecorded === 'boolean' ? { traceRecorded } : {}),
+  };
 }
 
 function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false): string[] {
@@ -127,34 +134,42 @@ function buildPlannerSystemPrompt(basePrompt: string): string {
   ].join('\n');
 }
 
-function respondWithPlannerContent(llm: LlmResponse) {
+function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean) {
   const parsed = parsePlannerContent(llm);
   return Response.json(withDevDebug(
     parsed.response,
     parsed.debugReason ?? llm.fallbackReason,
+    traceRecorded,
   ));
 }
 
 async function recordPlannerLlmTrace(
   llm: LlmResponse,
   taskTitle: string,
+  latencyMs: number,
   sessionId?: string,
-): Promise<void> {
-  if (llm.provider !== 'claude') return;
+): Promise<boolean> {
+  if (llm.provider !== 'claude') return false;
 
-  await insertAgentTrace({
-    sessionId,
-    agentId: ROLE,
-    traceType: 'llm_call',
-    inputTokens: llm.inputTokens ?? null,
-    outputTokens: llm.outputTokens ?? null,
-    latencyMs: llm.latencyMs ?? null,
-    model: llm.model ?? null,
-    metadata: {
-      provider: llm.provider,
-      task_title: taskTitle,
-    },
-  });
+  try {
+    const traceRecorded = await insertAgentTrace({
+      sessionId,
+      agentId: ROLE,
+      traceType: 'llm_call',
+      inputTokens: llm.inputTokens ?? null,
+      outputTokens: llm.outputTokens ?? null,
+      latencyMs,
+      model: llm.model ?? null,
+      metadata: {
+        provider: 'claude',
+        taskTitle,
+      },
+    });
+    return traceRecorded;
+  } catch {
+    console.warn('[Supabase] planner llm_call trace failed: trace_insert_failed');
+    return false;
+  }
 }
 
 async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
@@ -195,7 +210,7 @@ export async function POST(request: Request) {
     body.taskDescription,
     'Review the current sprint and suggest the safest next handoff.',
   );
-  const sessionId = normalizeSessionId(body.sessionId);
+  const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
 
   const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
   const liveEnabled = normalizedLiveFlag === 'true';
@@ -205,6 +220,7 @@ export async function POST(request: Request) {
     return Response.json(withDevDebug(
       await buildMockResponse(taskTitle, taskDescription),
       `live_disabled:${normalizedLiveFlag ?? 'missing'}`,
+      false,
     ));
   }
 
@@ -212,10 +228,12 @@ export async function POST(request: Request) {
     return Response.json(withDevDebug(
       await buildMockResponse(taskTitle, taskDescription),
       'missing_api_key',
+      false,
     ));
   }
 
   const plannerPrompt = getAgentRolePrompt(ROLE);
+  const claudeStartedAt = Date.now();
   const llm = await claudeClient.complete({
     agentRole: ROLE,
     systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt),
@@ -232,8 +250,9 @@ export async function POST(request: Request) {
     ],
     maxTokens: 320,
   });
+  const claudeLatencyMs = Date.now() - claudeStartedAt;
 
-  await recordPlannerLlmTrace(llm, taskTitle, sessionId);
+  const traceRecorded = await recordPlannerLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
 
-  return respondWithPlannerContent(llm);
+  return respondWithPlannerContent(llm, traceRecorded);
 }

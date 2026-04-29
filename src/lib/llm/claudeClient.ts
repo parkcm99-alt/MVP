@@ -147,8 +147,8 @@ export const claudeClient = {
         return {
           provider:       'claude',
           content:        getTextContent(message.content),
-          inputTokens:    message.usage.input_tokens,
-          outputTokens:   message.usage.output_tokens,
+          inputTokens:    typeof message.usage?.input_tokens === 'number' ? message.usage.input_tokens : null,
+          outputTokens:   typeof message.usage?.output_tokens === 'number' ? message.usage.output_tokens : null,
           latencyMs:      Date.now() - startedAt,
           model:          message.model,
           fallbackReason: model === getClaudeModel() ? undefined : 'model_fallback',

@@ -52,11 +52,11 @@ export interface LlmResponse {
   /** Generated text content. */
   content:    string;
 
-  /** Input tokens consumed (0 for mock). */
-  inputTokens:  number;
+  /** Input tokens consumed (0 for mock, null if a live provider omits usage). */
+  inputTokens:  number | null;
 
-  /** Output tokens consumed (0 for mock). */
-  outputTokens: number;
+  /** Output tokens consumed (0 for mock, null if a live provider omits usage). */
+  outputTokens: number | null;
 
   /** Wall-clock latency in ms (0 for mock). */
   latencyMs:  number;
@@ -87,4 +87,5 @@ export interface PlannerAgentResponse {
   risks: string[];
   nextAgent: string;
   debugReason?: string;
+  traceRecorded?: boolean;
 }

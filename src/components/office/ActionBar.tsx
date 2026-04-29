@@ -249,10 +249,11 @@ export default function ActionBar() {
     useSimStore.getState().setSpeech('planner', pendingSpeech);
 
     try {
+      const sessionId = getSessionId();
       const response = await fetch('/api/agents/planner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskTitle, taskDescription, sessionId: getSessionId() }),
+        body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
       });
       const result = await response.json() as PlannerAgentResponse;
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Planner';
