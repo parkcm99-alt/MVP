@@ -223,7 +223,7 @@ export default function TaskQueue() {
         eventBus.emit('agent.message', {
           agentId: 'developer',
           data: {
-            message: `Files: ${filesToChange.slice(0, 4).join(' / ')}`,
+            message: `수정 예상 파일: ${filesToChange.slice(0, 4).join(' / ')}`,
             taskTitle: task.title,
             provider: result.provider,
           },
@@ -234,7 +234,7 @@ export default function TaskQueue() {
         eventBus.emit('agent.message', {
           agentId: 'developer',
           data: {
-            message: `Tests: ${testPlan.slice(0, 3).join(' / ')}`,
+            message: `테스트 계획: ${testPlan.slice(0, 3).join(' / ')}`,
             taskTitle: task.title,
             provider: result.provider,
           },
