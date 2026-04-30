@@ -1,3 +1,4 @@
+import { isSupabaseJwtKey, isSupabaseProjectUrl } from './config';
 import { getSessionId, uuid } from './session';
 import type { AgentTraceInsert } from './types';
 import type { AgentRole } from '@/types';
@@ -17,22 +18,48 @@ interface InsertAgentTraceParams {
 
 const SENSITIVE_METADATA_KEYS = ['api_key', 'apikey', 'authorization', 'password', 'secret', 'token'];
 const MAX_SAFE_ERROR_BODY_LENGTH = 600;
+const warnedRestConfigReasons = new Set<string>();
 
-function getSupabaseRestConfig(): { url?: string; key?: string } {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+function warnRestConfigOnce(reason: string): void {
+  if (warnedRestConfigReasons.has(reason)) return;
+  warnedRestConfigReasons.add(reason);
+  console.warn('[Supabase] agent_traces config warning:', reason);
+}
+
+function getSupabaseRestConfig(): { url?: string; key?: string; reason?: string } {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
   const isServer = typeof window === 'undefined';
 
-  if (isServer && !serviceRoleKey) {
-    console.warn('[Supabase] agent_traces insert warning: missing_service_role_key');
+  if (!url) {
+    return { reason: 'missing_supabase_url' };
   }
 
-  return {
-    url,
-    key: isServer ? serviceRoleKey ?? publicKey : publicKey,
-  };
+  if (!isSupabaseProjectUrl(url)) {
+    warnRestConfigOnce('invalid_supabase_url');
+    return { url, reason: 'invalid_supabase_url' };
+  }
+
+  if (isServer) {
+    if (isSupabaseJwtKey(serviceRoleKey)) {
+      return { url, key: serviceRoleKey };
+    }
+
+    warnRestConfigOnce(serviceRoleKey ? 'invalid_service_role_key' : 'missing_service_role_key');
+  }
+
+  if (isSupabaseJwtKey(publicKey)) {
+    return { url, key: publicKey };
+  }
+
+  if (publicKey) {
+    warnRestConfigOnce('invalid_public_anon_key');
+    return { url, reason: 'invalid_public_anon_key' };
+  }
+
+  return { url, reason: 'missing_public_anon_key' };
 }
 
 function resolveSessionId(sessionId?: string): string {
@@ -92,9 +119,9 @@ export async function insertAgentTrace({
   metadata = null,
 }: InsertAgentTraceParams): Promise<boolean> {
   try {
-    const { url, key } = getSupabaseRestConfig();
+    const { url, key, reason } = getSupabaseRestConfig();
     if (!url || !key) {
-      console.warn('[Supabase] agent_traces insert skipped: missing_config');
+      console.warn('[Supabase] agent_traces insert skipped:', reason ?? 'missing_config');
       return false;
     }
 

@@ -17,35 +17,19 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import {
+  getPublicSupabaseConfig,
+  type SupabaseConfigStatus,
+} from './config';
 
-export type SupabaseConfigStatus = 'missing' | 'invalid_url' | 'invalid_key' | 'ready';
+export type { SupabaseConfigStatus } from './config';
 
 let didWarnInvalidConfig = false;
 
 let _client: SupabaseClient | null = null;
 
 function getSupabaseConfig(): { url?: string; key?: string; status: SupabaseConfigStatus } {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
-
-  if (!url || !key) {
-    return { url, key, status: 'missing' };
-  }
-
-  if (!url.includes('.supabase.co')) {
-    return { url, key, status: 'invalid_url' };
-  }
-
-  // Supabase anon keys are JWTs. Anthropic/OpenAI/service secrets must never sit in NEXT_PUBLIC_*.
-  if (!key.startsWith('eyJ') || key.split('.').length !== 3) {
-    return { url, key, status: 'invalid_key' };
-  }
-
-  return {
-    url,
-    key,
-    status: 'ready',
-  };
+  return getPublicSupabaseConfig();
 }
 
 export function getSupabaseConfigStatus(): SupabaseConfigStatus {
