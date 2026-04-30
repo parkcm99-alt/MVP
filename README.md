@@ -149,7 +149,7 @@ useRealtimeSync (외부 세션 수신 시)
 | Developer API route | ✅ `POST /api/agents/developer` |
 | Reviewer API route | ✅ `POST /api/agents/reviewer` |
 | 요청 body | ✅ `{ taskTitle, taskDescription, sessionId }` (`session_id`도 호환) |
-| 응답 형식 | ✅ `ok`, `provider`, `role`, `summary`, `steps`, `risks`, `nextAgent`, `traceRecorded` |
+| 응답 형식 | ✅ agent별 JSON shape + `traceRecorded`/model/token/latency telemetry |
 | live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
 | 기본 동작 | ✅ `ENABLE_LIVE_LLM=false` 이면 mock fallback |
 | 서버 전용 키 | ✅ `ANTHROPIC_API_KEY`는 `NEXT_PUBLIC_` 없이 서버에서만 사용 |
