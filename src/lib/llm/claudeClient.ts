@@ -14,7 +14,7 @@ import type { Message } from '@anthropic-ai/sdk/resources/messages';
 import { mockClaude } from './mockClaude';
 import type { LlmRequest, LlmResponse } from './types';
 
-export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-20250514';
+export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-6';
 const CLAUDE_DEFAULT_MAX_TOKENS = 320;
 const CLAUDE_HARD_MAX_TOKENS = 700;
 const CLAUDE_TIMEOUT_MS = 8_000;

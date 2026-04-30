@@ -200,12 +200,12 @@ useRealtimeSync (외부 세션 수신 시)
 ```bash
 ANTHROPIC_API_KEY=
 ENABLE_LIVE_LLM=false
-CLAUDE_MODEL=claude-sonnet-4-20250514
+CLAUDE_MODEL=claude-sonnet-4-6
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 `ANTHROPIC_API_KEY`는 서버 전용입니다. `NEXT_PUBLIC_ANTHROPIC_API_KEY` 같은 브라우저 노출 변수는 만들지 않습니다.
-`CLAUDE_MODEL`을 비워두면 서버 코드가 `claude-sonnet-4-20250514`를 사용합니다. 설정한 모델이 `model_not_found`로 실패하면 이 안정적인 기본 모델로 한 번 재시도합니다.
+`CLAUDE_MODEL`을 비워두면 서버 코드가 `claude-sonnet-4-6`를 사용합니다. 설정한 모델이 `model_not_found`로 실패하면 이 안정적인 기본 모델로 한 번 재시도합니다.
 `SUPABASE_SERVICE_ROLE_KEY`도 서버 전용입니다. Production의 agent API route에서 `llm_call` trace를 안정적으로 저장할 때 우선 사용하며, 브라우저에는 절대 노출하지 않습니다.
 
 ### 역할별 모델 설정
@@ -213,7 +213,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 각 에이전트가 사용할 모델을 독립적으로 지정할 수 있습니다. 모델 선택 우선순위는 아래와 같습니다.
 
 ```
-CLAUDE_<ROLE>_MODEL  →  CLAUDE_MODEL  →  claude-sonnet-4-20250514 (하드코딩 기본값)
+CLAUDE_<ROLE>_MODEL  →  CLAUDE_MODEL  →  claude-sonnet-4-6 (하드코딩 기본값)
 ```
 
 | 환경변수 | 적용 에이전트 | 기본값 (미설정 시) |
@@ -228,8 +228,8 @@ CLAUDE_<ROLE>_MODEL  →  CLAUDE_MODEL  →  claude-sonnet-4-20250514 (하드코
 
 ```bash
 # .env.local 또는 Vercel Environment Variables
-CLAUDE_REVIEWER_MODEL=claude-haiku-4-20250514
-CLAUDE_QA_MODEL=claude-haiku-4-20250514
+CLAUDE_REVIEWER_MODEL=claude-haiku-4-5-20251001
+CLAUDE_QA_MODEL=claude-haiku-4-5-20251001
 ```
 
 실제 호출에 사용된 모델명은 `agent_traces.model` 필드와 Debug Panel / Agent Trace Viewer에 그대로 표시됩니다.
@@ -241,7 +241,7 @@ CLAUDE_QA_MODEL=claude-haiku-4-20250514
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
 ENABLE_LIVE_LLM=true
-CLAUDE_MODEL=claude-sonnet-4-20250514
+CLAUDE_MODEL=claude-sonnet-4-6
 SUPABASE_SERVICE_ROLE_KEY=<supabase-service-role-key>
 ```
 
