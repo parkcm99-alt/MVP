@@ -5,7 +5,7 @@ import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import type { ArchitectAgentResponse } from '@/lib/llm/types';
+import type { ArchitectAgentResponse, DeveloperAgentResponse } from '@/lib/llm/types';
 import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
@@ -36,10 +36,17 @@ function buildArchitectureSummary(result: ArchitectAgentResponse): string {
   return notes ? `${result.summary} | ${notes}` : result.summary;
 }
 
+function buildDeveloperSummary(result: DeveloperAgentResponse): string {
+  const plan = result.implementationPlan.slice(0, 2).join(' ');
+  return plan ? `${result.summary} | ${plan}` : result.summary;
+}
+
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
+  const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const [architectBusyTaskId, setArchitectBusyTaskId] = useState<string | null>(null);
+  const [developerBusyTaskId, setDeveloperBusyTaskId] = useState<string | null>(null);
 
   const grouped: Record<TaskStatus, typeof tasks> = {
     in_progress: tasks.filter(t => t.status === 'in_progress'),
@@ -75,6 +82,15 @@ export default function TaskQueue() {
         }),
       });
       const result = await response.json() as ArchitectAgentResponse;
+      recordAgentResponse({
+        agentId: 'architect',
+        provider: result.provider,
+        traceRecorded: result.traceRecorded ?? false,
+        model: result.model ?? null,
+        latencyMs: result.latencyMs ?? null,
+        inputTokens: result.inputTokens ?? null,
+        outputTokens: result.outputTokens ?? null,
+      });
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Architect';
       const summary = result.summary || 'Architect 응답이 비어 있습니다.';
       const architectureNotes = Array.isArray(result.architectureNotes) ? result.architectureNotes : [];
@@ -115,6 +131,15 @@ export default function TaskQueue() {
       }, 4500);
     } catch {
       const speech = 'Architect 호출 실패. Mock simulation은 계속 동작합니다.';
+      recordAgentResponse({
+        agentId: 'architect',
+        provider: 'mock',
+        traceRecorded: false,
+        model: 'mock-fallback',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+      });
       eventBus.emit('agent.message', {
         agentId: 'architect',
         data: {
@@ -131,6 +156,124 @@ export default function TaskQueue() {
         useSimStore.getState().setTask('architect', previousTask);
       }
       setArchitectBusyTaskId(null);
+    }
+  }
+
+  async function askDeveloper(task: SimTask) {
+    if (developerBusyTaskId) return;
+
+    const store = useSimStore.getState();
+    const previousDeveloper = store.agents.developer;
+    const previousStatus: AgentStatus = previousDeveloper.status;
+    const previousTask = previousDeveloper.currentTask;
+    const implementationTask = `Implementation: ${task.title}`;
+
+    setDeveloperBusyTaskId(task.id);
+    store.setStatus('developer', 'thinking');
+    store.setTask('developer', implementationTask);
+    store.setSpeech('developer', '구현 방향 정리 중...');
+
+    try {
+      const sessionId = getSessionId();
+      const response = await fetch('/api/agents/developer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          taskDescription: formatDescription(task.description),
+          sessionId,
+          session_id: sessionId,
+        }),
+      });
+      const result = await response.json() as DeveloperAgentResponse;
+      recordAgentResponse({
+        agentId: 'developer',
+        provider: result.provider,
+        traceRecorded: result.traceRecorded ?? false,
+        model: result.model ?? null,
+        latencyMs: result.latencyMs ?? null,
+        inputTokens: result.inputTokens ?? null,
+        outputTokens: result.outputTokens ?? null,
+      });
+
+      const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Developer';
+      const summary = result.summary || 'Developer 응답이 비어 있습니다.';
+      const implementationPlan = Array.isArray(result.implementationPlan) ? result.implementationPlan : [];
+      const filesToChange = Array.isArray(result.filesToChange) ? result.filesToChange : [];
+      const testPlan = Array.isArray(result.testPlan) ? result.testPlan : [];
+      const speech = `${providerLabel}: ${summary}`.slice(0, 72);
+
+      store.setStatus('developer', 'coding');
+      store.setSpeech('developer', speech);
+      eventBus.emit('agent.message', {
+        agentId: 'developer',
+        data: {
+          message: `구현 계획 완료: ${buildDeveloperSummary({
+            ...result,
+            summary,
+            implementationPlan,
+          })}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+        },
+      });
+
+      if (filesToChange.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'developer',
+          data: {
+            message: `Files: ${filesToChange.slice(0, 4).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      if (testPlan.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'developer',
+          data: {
+            message: `Tests: ${testPlan.slice(0, 3).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      refreshTraces();
+      window.setTimeout(() => {
+        if (useSimStore.getState().agents.developer.speech === speech) {
+          useSimStore.getState().setSpeech('developer', null);
+        }
+      }, 4500);
+    } catch {
+      const speech = 'Developer 호출 실패. Mock simulation은 계속 동작합니다.';
+      recordAgentResponse({
+        agentId: 'developer',
+        provider: 'mock',
+        traceRecorded: false,
+        model: 'mock-fallback',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+      });
+      eventBus.emit('agent.message', {
+        agentId: 'developer',
+        data: {
+          message: `구현 계획 완료: ${speech}`,
+          taskTitle: task.title,
+          provider: 'mock',
+        },
+      });
+      store.setSpeech('developer', speech);
+    } finally {
+      const developer = useSimStore.getState().agents.developer;
+      if (developer.currentTask === implementationTask) {
+        useSimStore.getState().setStatus('developer', previousStatus);
+        useSimStore.getState().setTask('developer', previousTask);
+      }
+      setDeveloperBusyTaskId(null);
     }
   }
 
@@ -194,6 +337,19 @@ export default function TaskQueue() {
                         title="Architect Claude/mock으로 시스템 설계 검토"
                       >
                         {architectBusyTaskId === task.id ? 'Reviewing...' : 'Ask Architect'}
+                      </button>
+                    </div>
+                  )}
+                  {task.assignedTo === 'developer' && task.status !== 'done' && (
+                    <div className="task-card-actions">
+                      <button
+                        className="task-card-ai-btn task-card-ai-btn--developer"
+                        type="button"
+                        onClick={() => { void askDeveloper(task); }}
+                        disabled={developerBusyTaskId !== null}
+                        title="Developer Claude/mock으로 구현 계획 생성"
+                      >
+                        {developerBusyTaskId === task.id ? 'Planning...' : 'Ask Developer'}
                       </button>
                     </div>
                   )}

@@ -110,3 +110,21 @@ export interface ArchitectAgentResponse {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }
+
+export interface DeveloperAgentResponse {
+  ok: boolean;
+  provider: 'mock' | 'claude';
+  role: 'developer';
+  summary: string;
+  implementationPlan: string[];
+  filesToChange: string[];
+  testPlan: string[];
+  risks: string[];
+  nextAgent: 'reviewer' | 'qa';
+  debugReason?: string;
+  traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}

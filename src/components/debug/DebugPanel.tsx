@@ -38,10 +38,10 @@ function getTraceClass(value: boolean | null): string {
 export default function DebugPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
-  const planner = useDebugStore(s => s.planner);
+  const lastLlm = useDebugStore(s => s.lastLlm);
   const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
-  const traceRefreshKey = Math.max(planner.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
+  const traceRefreshKey = Math.max(lastLlm.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
   return (
     <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
@@ -65,36 +65,36 @@ export default function DebugPanel() {
           </div>
           <div className="debug-row">
             <span>LLM provider</span>
-            <strong className={getProviderClass(planner.provider)}>
-              {planner.provider ?? '—'}
+            <strong className={getProviderClass(lastLlm.provider)}>
+              {lastLlm.provider ?? '—'}
             </strong>
           </div>
           <div className="debug-row">
-            <span>Last Plan</span>
-            <strong>{planner.lastPlanAt ? formatKstTime(planner.lastPlanAt) : '—'}</strong>
+            <span>Last LLM</span>
+            <strong>{lastLlm.lastPlanAt ? `${formatKstTime(lastLlm.lastPlanAt)} · ${lastLlm.agentId ?? 'agent'}` : '—'}</strong>
           </div>
           <div className="debug-row">
             <span>traceRecorded</span>
-            <strong className={getTraceClass(planner.traceRecorded)}>
-              {formatTraceRecorded(planner.traceRecorded)}
+            <strong className={getTraceClass(lastLlm.traceRecorded)}>
+              {formatTraceRecorded(lastLlm.traceRecorded)}
             </strong>
           </div>
           <div className="debug-row debug-row-wide">
             <span>last model</span>
-            <strong>{planner.model ?? '—'}</strong>
+            <strong>{lastLlm.model ?? '—'}</strong>
           </div>
           <div className="debug-metrics">
             <div>
               <span>latency_ms</span>
-              <strong>{formatNullableNumber(planner.latencyMs, 'ms')}</strong>
+              <strong>{formatNullableNumber(lastLlm.latencyMs, 'ms')}</strong>
             </div>
             <div>
               <span>input_tokens</span>
-              <strong>{formatNullableNumber(planner.inputTokens)}</strong>
+              <strong>{formatNullableNumber(lastLlm.inputTokens)}</strong>
             </div>
             <div>
               <span>output_tokens</span>
-              <strong>{formatNullableNumber(planner.outputTokens)}</strong>
+              <strong>{formatNullableNumber(lastLlm.outputTokens)}</strong>
             </div>
           </div>
           <AgentTraceViewer refreshKey={traceRefreshKey} />
