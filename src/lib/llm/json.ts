@@ -16,6 +16,43 @@ export function extractJsonObject(content: string): string {
   return unfenced.slice(firstBrace, lastBrace + 1);
 }
 
-export function parseLlmJsonObject(content: string): Record<string, unknown> {
-  return JSON.parse(extractJsonObject(content)) as Record<string, unknown>;
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseJsonCandidate(content: string): unknown {
+  const unfenced = stripMarkdownCodeFence(content);
+
+  try {
+    return JSON.parse(unfenced) as unknown;
+  } catch (primaryError) {
+    const extracted = extractJsonObject(unfenced);
+
+    if (extracted === unfenced) {
+      throw primaryError;
+    }
+
+    return JSON.parse(extracted) as unknown;
+  }
+}
+
+export function parseLlmJsonValue(content: string, maxStringUnwraps = 2): unknown {
+  let current: unknown = content;
+
+  for (let unwraps = 0; unwraps <= maxStringUnwraps; unwraps += 1) {
+    if (typeof current !== 'string') return current;
+    current = parseJsonCandidate(current);
+  }
+
+  return current;
+}
+
+export function parseLlmJsonObject(content: string, maxStringUnwraps = 2): Record<string, unknown> {
+  const parsed = parseLlmJsonValue(content, maxStringUnwraps);
+
+  if (!isJsonObject(parsed)) {
+    throw new Error('LLM JSON response was not an object.');
+  }
+
+  return parsed;
 }

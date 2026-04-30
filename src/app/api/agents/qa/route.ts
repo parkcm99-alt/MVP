@@ -88,7 +88,9 @@ function withDevDebug(
     ? { ...response, traceRecorded }
     : response;
 
-  if (process.env.NODE_ENV === 'production') return responseWithTrace;
+  if (process.env.NODE_ENV === 'production' && debugReason !== 'json_parse_failed') {
+    return responseWithTrace;
+  }
 
   return {
     ...responseWithTrace,
@@ -112,6 +114,38 @@ function withQaTelemetry(
   };
 }
 
+function looksLikeJsonPayload(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed.startsWith('{') ||
+    trimmed.startsWith('```') ||
+    trimmed.startsWith('"{') ||
+    trimmed.startsWith('"\\{') ||
+    trimmed.startsWith('\\{')
+  );
+}
+
+function unwrapNestedSummaryPayload(parsed: Record<string, unknown>): {
+  parsed: Record<string, unknown>;
+  failed: boolean;
+} {
+  if (typeof parsed.summary !== 'string' || !looksLikeJsonPayload(parsed.summary)) {
+    return { parsed, failed: false };
+  }
+
+  try {
+    return {
+      parsed: {
+        ...parsed,
+        ...parseLlmJsonObject(parsed.summary),
+      },
+      failed: false,
+    };
+  } catch {
+    return { parsed, failed: true };
+  }
+}
+
 function parseQaContent(llm: LlmResponse): {
   response: QaAgentResponse;
   debugReason?: string;
@@ -122,7 +156,14 @@ function parseQaContent(llm: LlmResponse): {
   });
 
   try {
-    const parsed = parseLlmJsonObject(llm.content);
+    const initialParsed = parseLlmJsonObject(llm.content);
+    const nested = unwrapNestedSummaryPayload(initialParsed);
+
+    if (nested.failed) {
+      return { response: fallback, debugReason: 'json_parse_failed' };
+    }
+
+    const parsed = nested.parsed;
     const summary = normalizeText(parsed.summary, '');
 
     if (!summary) {
@@ -156,7 +197,11 @@ function buildQaSystemPrompt(basePrompt: string): string {
     'Do not wrap the response in ```json fences.',
     'Do not add prose before or after the JSON object.',
     'Do not output any text outside the JSON object.',
+    'Never return an escaped JSON string.',
+    'Never place JSON inside the summary field.',
     'The entire response must be parseable by JSON.parse.',
+    'The summary field must be a short human-readable sentence only.',
+    'testCases, regressionChecks, and qualityRisks must be arrays of strings.',
     'Use exactly this JSON object shape:',
     '{"summary":"string","testCases":["string"],"regressionChecks":["string"],"qualityRisks":["string"],"finalStatus":"needs_more_testing","nextAgent":"developer"}',
     'finalStatus must be exactly one of: passed, failed, needs_more_testing.',
@@ -289,10 +334,11 @@ export async function POST(request: Request) {
           'Create a concise QA verification result for this task.',
           'Include test cases, regression checks, quality risks, final status, and next agent recommendation.',
           'Return only the JSON object. No markdown. No code fences.',
+          'summary must be a short plain sentence, not JSON and not an escaped JSON string.',
         ].join('\n'),
       },
     ],
-    maxTokens: 380,
+    maxTokens: 620,
   });
   const claudeLatencyMs = Date.now() - claudeStartedAt;
 

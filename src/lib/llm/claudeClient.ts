@@ -15,7 +15,8 @@ import { mockClaude } from './mockClaude';
 import type { LlmRequest, LlmResponse } from './types';
 
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-20250514';
-const CLAUDE_MAX_TOKENS = 320;
+const CLAUDE_DEFAULT_MAX_TOKENS = 320;
+const CLAUDE_HARD_MAX_TOKENS = 700;
 const CLAUDE_TIMEOUT_MS = 8_000;
 
 export function getClaudeModel(): string {
@@ -133,7 +134,7 @@ export const claudeClient = {
         const message = await client.messages.create(
           {
             model,
-            max_tokens: Math.min(request.maxTokens ?? CLAUDE_MAX_TOKENS, CLAUDE_MAX_TOKENS),
+            max_tokens: Math.min(request.maxTokens ?? CLAUDE_DEFAULT_MAX_TOKENS, CLAUDE_HARD_MAX_TOKENS),
             system: request.systemPrompt,
             messages: request.messages,
           },
