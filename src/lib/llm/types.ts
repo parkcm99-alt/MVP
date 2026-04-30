@@ -146,3 +146,21 @@ export interface ReviewerAgentResponse {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }
+
+export interface QaAgentResponse {
+  ok: boolean;
+  provider: 'mock' | 'claude';
+  role: 'qa';
+  summary: string;
+  testCases: string[];
+  regressionChecks: string[];
+  qualityRisks: string[];
+  finalStatus: 'passed' | 'failed' | 'needs_more_testing';
+  nextAgent: 'developer' | 'reviewer' | 'planner';
+  debugReason?: string;
+  traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}

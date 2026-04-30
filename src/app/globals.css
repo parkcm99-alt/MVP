@@ -489,6 +489,11 @@ html, body {
   color: #D8B4FE;
   box-shadow: 0 0 9px rgba(192,132,252,0.08);
 }
+.task-card-ai-btn--qa {
+  border: 1px solid #FB923C;
+  color: #FDBA74;
+  box-shadow: 0 0 9px rgba(251,146,60,0.08);
+}
 .task-card-ai-btn:hover:not(:disabled) {
   background: rgba(20,184,166,0.13);
   color: #CCFBF1;
@@ -500,6 +505,10 @@ html, body {
 .task-card-ai-btn--reviewer:hover:not(:disabled) {
   background: rgba(126,34,206,0.15);
   color: #F3E8FF;
+}
+.task-card-ai-btn--qa:hover:not(:disabled) {
+  background: rgba(234,88,12,0.15);
+  color: #FFEDD5;
 }
 .task-card-ai-btn:active:not(:disabled) {
   transform: translateY(1px);

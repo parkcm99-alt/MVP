@@ -52,7 +52,9 @@ export const AGENT_ROLE_PROMPTS = {
     label: 'QA',
     systemPrompt: [
       SHARED_AGENT_CONTEXT,
-      'You are QA. Design practical test scenarios, verify acceptance criteria, report reproducible defects, and confirm release readiness.',
+      'You are QA. Produce practical quality verification guidance before release.',
+      'Create test cases, regression checks, quality risks, and a final verification status based on the assigned task.',
+      'If quality is not ready, recommend the safest next handoff to Developer, Reviewer, or Planner with concise reasoning.',
     ].join(' '),
   },
 } satisfies Record<AgentRole, AgentRolePrompt>;

@@ -23,6 +23,7 @@
 | Claude API Architect 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Claude API Developer 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Claude API Reviewer 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
+| Claude API QA 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
@@ -35,7 +36,7 @@
 
 5명의 AI 에이전트(Planner, Architect, Developer, Reviewer, QA)가 오피스에서 스프린트를 진행하는 모습을 픽셀아트로 시각화한 시뮬레이션입니다.
 
-Planner, Architect, Developer, Reviewer는 서버 전용 API route를 통해 Claude live 호출까지 연결되었고, QA는 아직 mock workflow를 유지합니다. AgentOps, OpenAI, LangGraph, CrewAI 실제 연동은 아직 하지 않았습니다.
+Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해 Claude live 호출까지 연결되었습니다. AgentOps, OpenAI, LangGraph, CrewAI 실제 연동은 아직 하지 않았습니다.
 
 ---
 
@@ -70,6 +71,7 @@ Planner, Architect, Developer, Reviewer는 서버 전용 API route를 통해 Cla
 - Architect 담당 task에는 **Ask Architect** 버튼으로 Claude/mock 설계 검토 요청 가능
 - Developer 담당 task에는 **Ask Developer** 버튼으로 Claude/mock 구현 계획 요청 가능
 - Reviewer 담당 task에는 **Ask Reviewer** 버튼으로 Claude/mock 코드 리뷰 요청 가능
+- QA 담당 task에는 **Ask QA** 버튼으로 Claude/mock 테스트 계획 요청 가능
 - **Agent Status** — 에이전트별 현재 상태·현재 태스크·완료 수
 - **Event Log** — 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
 - Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
@@ -148,6 +150,7 @@ useRealtimeSync (외부 세션 수신 시)
 | Architect API route | ✅ `POST /api/agents/architect` |
 | Developer API route | ✅ `POST /api/agents/developer` |
 | Reviewer API route | ✅ `POST /api/agents/reviewer` |
+| QA API route | ✅ `POST /api/agents/qa` |
 | 요청 body | ✅ `{ taskTitle, taskDescription, sessionId }` (`session_id`도 호환) |
 | 응답 형식 | ✅ agent별 JSON shape + `traceRecorded`/model/token/latency telemetry |
 | live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
@@ -161,6 +164,7 @@ useRealtimeSync (외부 세션 수신 시)
 | Architect trace 기록 | ✅ Claude 성공 시 `agent_id="architect"` `llm_call` |
 | Developer trace 기록 | ✅ Claude 성공 시 `agent_id="developer"` `llm_call` |
 | Reviewer trace 기록 | ✅ Claude 성공 시 `agent_id="reviewer"` `llm_call` |
+| QA trace 기록 | ✅ Claude 성공 시 `agent_id="qa"` `llm_call` |
 | Debug Panel | ✅ 마지막 LLM 응답의 agent/provider/trace/model/token/latency 표시 |
 | Agent Trace Viewer | ✅ Supabase `agent_traces` 최근 30개 조회 + Refresh |
 | LLM 공통 타입 | ✅ `src/lib/llm/types.ts` |
@@ -202,7 +206,7 @@ Agent API 응답에서 `provider:"claude"`와 `traceRecorded:true`가 함께 나
 
 | trace_type | 기록 시점 |
 |------------|-----------|
-| `llm_call` | Planner/Architect/Developer/Reviewer가 서버 route에서 Claude live 호출에 성공했을 때 token/latency/model 기록 (`SUPABASE_SERVICE_ROLE_KEY` 우선 사용) |
+| `llm_call` | Planner/Architect/Developer/Reviewer/QA가 서버 route에서 Claude live 호출에 성공했을 때 token/latency/model 기록 (`SUPABASE_SERVICE_ROLE_KEY` 우선 사용) |
 | `handoff` | Planner 응답 steps로 만든 하위 task를 담당 에이전트에게 넘길 때 기록 |
 | `decision` | Planner-generated task를 담당 에이전트가 시작할 때 기록 |
 
@@ -329,10 +333,10 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 
 ### Phase 4 — Claude API Single-Agent Integration
 - Planner API route 1단계 완료 (`ENABLE_LIVE_LLM` gate + mock fallback + live Claude)
-- Architect / Developer / Reviewer API route 1단계 완료 (Task Queue 버튼 + trace 기록)
+- Architect / Developer / Reviewer / QA API route 1단계 완료 (Task Queue 버튼 + trace 기록)
 - Planner 응답 steps → Task Queue 자동 생성 완료
 - Planner-generated task mini workflow 완료
-- 다음 단계: QA Claude 연결 또는 에이전트 클릭 카드 Trace 섹션 실연결
+- 다음 단계: 에이전트 클릭 카드 Trace 섹션 실연결 또는 전체 agent workflow 자동 orchestration
 
 ### Phase 5 — LangGraph / CrewAI Orchestration
 - 5 에이전트 전체 LangGraph 워크플로우 실연결
@@ -358,7 +362,8 @@ src/
 │   │       ├── planner/route.ts     # Planner 서버 전용 Claude/mock API route
 │   │       ├── architect/route.ts   # Architect 서버 전용 Claude/mock API route
 │   │       ├── developer/route.ts   # Developer 서버 전용 Claude/mock API route
-│   │       └── reviewer/route.ts    # Reviewer 서버 전용 Claude/mock API route
+│   │       ├── reviewer/route.ts    # Reviewer 서버 전용 Claude/mock API route
+│   │       └── qa/route.ts          # QA 서버 전용 Claude/mock API route
 │   └── globals.css           # 전체 CSS (픽셀 테마, 애니메이션, 패널 스타일)
 │
 ├── components/
@@ -429,6 +434,6 @@ src/
 | 워크플로우 그래프 | @xyflow/react (React Flow) |
 | 실시간 DB | Supabase Realtime — events/agents/tasks 3-table 동기화 완료 |
 | 배포 | Vercel (프로덕션) |
-| LLM | Anthropic SDK (`@anthropic-ai/sdk`) — Planner/Architect/Developer/Reviewer route live 옵션, 기본 mock |
+| LLM | Anthropic SDK (`@anthropic-ai/sdk`) — 5-agent route live 옵션, 기본 mock |
 | 관측성 | Supabase `agent_traces` + Agent Trace Viewer — `llm_call`/`handoff`/`decision`, AgentOps SDK는 미연동 |
 | 미래 워크플로우 | LangGraph / CrewAI — Phase 5 예정 |

@@ -5,7 +5,12 @@ import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import type { ArchitectAgentResponse, DeveloperAgentResponse, ReviewerAgentResponse } from '@/lib/llm/types';
+import type {
+  ArchitectAgentResponse,
+  DeveloperAgentResponse,
+  QaAgentResponse,
+  ReviewerAgentResponse,
+} from '@/lib/llm/types';
 import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
@@ -46,6 +51,11 @@ function buildReviewerSummary(result: ReviewerAgentResponse): string {
   return findings ? `${result.summary} | ${findings}` : result.summary;
 }
 
+function buildQaSummary(result: QaAgentResponse): string {
+  const testCases = result.testCases.slice(0, 2).join(' ');
+  return testCases ? `${result.summary} | ${testCases}` : result.summary;
+}
+
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
@@ -53,6 +63,7 @@ export default function TaskQueue() {
   const [architectBusyTaskId, setArchitectBusyTaskId] = useState<string | null>(null);
   const [developerBusyTaskId, setDeveloperBusyTaskId] = useState<string | null>(null);
   const [reviewerBusyTaskId, setReviewerBusyTaskId] = useState<string | null>(null);
+  const [qaBusyTaskId, setQaBusyTaskId] = useState<string | null>(null);
 
   const grouped: Record<TaskStatus, typeof tasks> = {
     in_progress: tasks.filter(t => t.status === 'in_progress'),
@@ -401,6 +412,135 @@ export default function TaskQueue() {
     }
   }
 
+  async function askQa(task: SimTask) {
+    if (qaBusyTaskId) return;
+
+    const store = useSimStore.getState();
+    const previousQa = store.agents.qa;
+    const previousStatus: AgentStatus = previousQa.status;
+    const previousTask = previousQa.currentTask;
+    const verificationTask = `QA: ${task.title}`;
+
+    setQaBusyTaskId(task.id);
+    store.setStatus('qa', 'thinking');
+    store.setTask('qa', verificationTask);
+    store.setSpeech('qa', '테스트 계획 작성 중...');
+
+    try {
+      const sessionId = getSessionId();
+      const response = await fetch('/api/agents/qa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          taskDescription: formatDescription(task.description),
+          sessionId,
+          session_id: sessionId,
+        }),
+      });
+      const result = await response.json() as QaAgentResponse;
+      recordAgentResponse({
+        agentId: 'qa',
+        provider: result.provider,
+        traceRecorded: result.traceRecorded ?? false,
+        model: result.model ?? null,
+        latencyMs: result.latencyMs ?? null,
+        inputTokens: result.inputTokens ?? null,
+        outputTokens: result.outputTokens ?? null,
+      });
+
+      const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock QA';
+      const summary = result.summary || 'QA 응답이 비어 있습니다.';
+      const testCases = Array.isArray(result.testCases) ? result.testCases : [];
+      const regressionChecks = Array.isArray(result.regressionChecks) ? result.regressionChecks : [];
+      const finalStatus = result.finalStatus ?? 'needs_more_testing';
+      const speech = `${providerLabel}: ${summary}`.slice(0, 72);
+
+      store.setStatus('qa', 'testing');
+      store.setSpeech('qa', speech);
+      eventBus.emit('agent.message', {
+        agentId: 'qa',
+        data: {
+          message: `테스트 계획 완료: ${buildQaSummary({
+            ...result,
+            summary,
+            testCases,
+          })}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+          finalStatus,
+        },
+      });
+
+      if (testCases.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'qa',
+          data: {
+            message: `테스트 케이스: ${testCases.slice(0, 4).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      if (regressionChecks.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'qa',
+          data: {
+            message: `회귀 테스트: ${regressionChecks.slice(0, 3).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      eventBus.emit('agent.message', {
+        agentId: 'qa',
+        data: {
+          message: `최종 검증 상태: ${finalStatus}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+        },
+      });
+
+      refreshTraces();
+      window.setTimeout(() => {
+        if (useSimStore.getState().agents.qa.speech === speech) {
+          useSimStore.getState().setSpeech('qa', null);
+        }
+      }, 4500);
+    } catch {
+      const speech = 'QA 호출 실패. Mock simulation은 계속 동작합니다.';
+      recordAgentResponse({
+        agentId: 'qa',
+        provider: 'mock',
+        traceRecorded: false,
+        model: 'mock-fallback',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+      });
+      eventBus.emit('agent.message', {
+        agentId: 'qa',
+        data: {
+          message: `테스트 계획 완료: ${speech}`,
+          taskTitle: task.title,
+          provider: 'mock',
+        },
+      });
+      store.setSpeech('qa', speech);
+    } finally {
+      const qa = useSimStore.getState().agents.qa;
+      if (qa.currentTask === verificationTask) {
+        useSimStore.getState().setStatus('qa', previousStatus);
+        useSimStore.getState().setTask('qa', previousTask);
+      }
+      setQaBusyTaskId(null);
+    }
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -487,6 +627,19 @@ export default function TaskQueue() {
                         title="Reviewer Claude/mock으로 코드 리뷰 결과 생성"
                       >
                         {reviewerBusyTaskId === task.id ? 'Reviewing...' : 'Ask Reviewer'}
+                      </button>
+                    </div>
+                  )}
+                  {task.assignedTo === 'qa' && task.status !== 'done' && (
+                    <div className="task-card-actions">
+                      <button
+                        className="task-card-ai-btn task-card-ai-btn--qa"
+                        type="button"
+                        onClick={() => { void askQa(task); }}
+                        disabled={qaBusyTaskId !== null}
+                        title="QA Claude/mock으로 테스트 계획 생성"
+                      >
+                        {qaBusyTaskId === task.id ? 'Testing...' : 'Ask QA'}
                       </button>
                     </div>
                   )}
