@@ -8,7 +8,6 @@ import type { AgentRole, AgentStatus } from '@/types';
 import OfficeFurniture from './OfficeFurniture';
 import AgentSprite from './AgentSprite';
 import SpeechBubble from './SpeechBubble';
-import ActionBar from './ActionBar';
 
 // ── status overlay icons ──────────────────────────────────────────────────────
 
@@ -170,9 +169,6 @@ export default function OfficeCanvas() {
           </button>
         </div>
       </div>
-
-      {/* ── sprint scenario control bar ── */}
-      <ActionBar />
 
       {/* ── scale-to-fit canvas area ── */}
       <div

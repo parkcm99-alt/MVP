@@ -1,8 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
-import FullFlowSummary from '@/components/debug/FullFlowSummary';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
@@ -40,9 +38,7 @@ export default function DebugPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const lastLlm = useDebugStore(s => s.lastLlm);
-  const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
-  const traceRefreshKey = Math.max(lastLlm.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
   return (
     <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
@@ -98,8 +94,6 @@ export default function DebugPanel() {
               <strong>{formatNullableNumber(lastLlm.outputTokens)}</strong>
             </div>
           </div>
-          <FullFlowSummary />
-          <AgentTraceViewer refreshKey={traceRefreshKey} />
         </div>
       )}
     </section>
