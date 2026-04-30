@@ -21,6 +21,8 @@ export interface FullFlowSummaryData {
   failedAgent:             string | null;
   failReason:              string | null;
   completedAgents:         string[];
+  /** The user's original work request text, if provided. */
+  originalRequest:         string | null;
 }
 
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';

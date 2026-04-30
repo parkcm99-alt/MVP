@@ -89,6 +89,16 @@ export default function FullFlowSummary() {
 
       {!collapsed && (
         <div className="flow-summary-body">
+          {/* Original request (if user provided one) */}
+          {data.originalRequest && (
+            <div className="flow-summary-request-row">
+              <span className="fsa-label">Request</span>
+              <span className="flow-summary-request-text" title={data.originalRequest}>
+                {data.originalRequest}
+              </span>
+            </div>
+          )}
+
           {/* Running indicator */}
           {status === 'running' && (
             <div className="flow-summary-running">

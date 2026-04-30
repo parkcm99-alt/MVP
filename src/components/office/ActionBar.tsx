@@ -249,6 +249,8 @@ export default function ActionBar() {
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [flowBusy, setFlowBusy] = useState(false);
+  const [cooldownActive, setCooldownActive] = useState(false);
+  const [workRequest, setWorkRequest] = useState('');
   const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const setLastFlowSummary = useDebugStore(s => s.setLastFlowSummary);
@@ -262,11 +264,13 @@ export default function ActionBar() {
   }, []);
 
   async function runFullFlow() {
-    if (plannerBusy || flowBusy) return;
+    if (plannerBusy || flowBusy || cooldownActive) return;
 
+    const hasRequest = workRequest.trim().length > 0;
+    const trimmedRequest = workRequest.trim();
     const task = pickHighestPriorityTask(tasks);
-    const baseTitle = task?.title ?? 'Full Agent Flow 태스크';
-    const baseDesc  = task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.';
+    const baseTitle = hasRequest ? 'User Work Request' : (task?.title ?? 'Full Agent Flow 태스크');
+    const baseDesc  = hasRequest ? trimmedRequest : (task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.');
     const sessionId = getSessionId();
 
     // ── Accumulators (declared before try so inner catches can read them) ──
@@ -309,6 +313,7 @@ export default function ActionBar() {
         failedAgent: agentName,
         failReason:  reason,
         completedAgents: [...completedAgents],
+        originalRequest: hasRequest ? trimmedRequest : null,
       });
     }
 
@@ -320,8 +325,14 @@ export default function ActionBar() {
       qaSummary: null, qaFinalStatus: null,
       totalLatencyMs: 0, totalInputTokens: 0, totalOutputTokens: 0,
       completedAt: null, failedAgent: null, failReason: null, completedAgents: [],
+      originalRequest: hasRequest ? trimmedRequest : null,
     });
-    sysLog('[FLOW] Full Agent Flow 시작');
+    if (hasRequest) {
+      sysLog('[FLOW] 사용자 요청 기반 Full Flow 시작');
+      sysLog(`[Planner] 사용자 요청 분석 시작: ${trimmedRequest.slice(0, 60)}${trimmedRequest.length > 60 ? '...' : ''}`);
+    } else {
+      sysLog('[FLOW] Full Agent Flow 시작');
+    }
 
     try {
       // ── Step 1: Planner ──────────────────────────────────────────────────
@@ -470,6 +481,7 @@ export default function ActionBar() {
         completedAt,
         failedAgent: null, failReason: null,
         completedAgents: [...completedAgents],
+        originalRequest: hasRequest ? trimmedRequest : null,
       });
       const totalTokens = totalInputTokens + totalOutputTokens;
       setLastFlowSummary(`완료 | QA: ${qaFinalStatus} | Reviewer: ${reviewerApprovalStatus} | ${totalTokens} tokens`);
@@ -484,6 +496,9 @@ export default function ActionBar() {
         }
       });
       setFlowBusy(false);
+      // 3-second cooldown to prevent rapid re-execution
+      setCooldownActive(true);
+      window.setTimeout(() => setCooldownActive(false), 3000);
     }
   }
 
@@ -603,10 +618,28 @@ export default function ActionBar() {
     }
   }
 
+  const flowBlocked = flowBusy || cooldownActive;
+  const anyBusy     = flowBlocked || plannerBusy;
+
   return (
     <div className="action-bar">
-      <span className="action-bar-label">ACTIONS</span>
+      {/* ── Work Request row ─────────────────────────────────────────── */}
+      <div className="work-request-row">
+        <span className="work-request-label">REQUEST</span>
+        <textarea
+          className="work-request-textarea"
+          value={workRequest}
+          onChange={e => setWorkRequest(e.target.value)}
+          placeholder="예: 이디야 파일럿 운영 현황을 정리하고, 리스크와 다음 액션을 뽑아줘."
+          rows={2}
+          disabled={flowBusy}
+          aria-label="업무 요청 입력"
+        />
+      </div>
+
+      {/* ── Action buttons row ────────────────────────────────────────── */}
       <div className="action-bar-buttons">
+        <span className="action-bar-label">ACTIONS</span>
         <ActionBtn
           variant="start"
           onClick={() => simulationEngine.startSprint()}
@@ -633,17 +666,23 @@ export default function ActionBar() {
           variant="planner"
           onClick={() => { void askPlanner(); }}
           title="가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획"
-          disabled={plannerBusy || flowBusy}
+          disabled={anyBusy}
         >
           {plannerBusy ? 'Planning...' : 'Plan with Claude'}
         </ActionBtn>
         <ActionBtn
           variant="flow"
           onClick={() => { void runFullFlow(); }}
-          title="Planner → Architect → Developer → Reviewer → QA 전체 워크플로우 실행"
-          disabled={flowBusy || plannerBusy}
+          title={workRequest.trim() ? '입력한 업무 요청 기반으로 전체 플로우 실행' : 'Planner → Architect → Developer → Reviewer → QA 전체 워크플로우 실행 (기본 task 사용)'}
+          disabled={anyBusy}
         >
-          {flowBusy ? 'Running Flow...' : '⚡ Run Full Flow'}
+          {flowBusy
+            ? 'Running Flow...'
+            : cooldownActive
+              ? '⏳ Wait...'
+              : workRequest.trim()
+                ? '⚡ Run Flow from Request'
+                : '⚡ Run Full Flow'}
         </ActionBtn>
         <ActionBtn
           variant="complete"
