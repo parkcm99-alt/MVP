@@ -40,6 +40,7 @@ export default function DebugPanel() {
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const lastLlm = useDebugStore(s => s.lastLlm);
   const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
+  const lastFlowSummary = useDebugStore(s => s.lastFlowSummary);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
   const traceRefreshKey = Math.max(lastLlm.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
@@ -97,6 +98,12 @@ export default function DebugPanel() {
               <strong>{formatNullableNumber(lastLlm.outputTokens)}</strong>
             </div>
           </div>
+          {lastFlowSummary && (
+            <div className="debug-row debug-row-wide">
+              <span>last flow</span>
+              <strong className="debug-value-live" style={{ wordBreak: 'break-word' }}>{lastFlowSummary}</strong>
+            </div>
+          )}
           <AgentTraceViewer refreshKey={traceRefreshKey} />
         </div>
       )}

@@ -275,6 +275,14 @@ html, body {
   box-shadow: 0 3px 0 #020817, inset 0 1px 0 rgba(147,197,253,0.08);
 }
 
+/* ⚡ Run Full Flow — amber */
+.action-btn-flow {
+  background: #140A00;
+  border: 2px solid #D97706;
+  color: #FCD34D;
+  box-shadow: 0 3px 0 #0C0500, inset 0 1px 0 rgba(252,211,77,0.08);
+}
+
 /* ✓ Complete — violet */
 .action-btn-complete {
   background: #110720;

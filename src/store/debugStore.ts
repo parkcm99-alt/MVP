@@ -31,10 +31,12 @@ interface DebugStore {
   planner: PlannerDebugSnapshot;
   lastLlm: PlannerDebugSnapshot;
   traceRefreshAt: number | null;
+  lastFlowSummary: string | null;
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
   refreshTraces: () => void;
+  setLastFlowSummary: (summary: string) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -55,6 +57,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
   planner: INITIAL_PLANNER_DEBUG,
   lastLlm: INITIAL_PLANNER_DEBUG,
   traceRefreshAt: null,
+  lastFlowSummary: null,
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
@@ -96,4 +99,6 @@ export const useDebugStore = create<DebugStore>((set) => ({
     }),
 
   refreshTraces: () => set({ traceRefreshAt: Date.now() }),
+
+  setLastFlowSummary: (summary) => set({ lastFlowSummary: summary }),
 }));

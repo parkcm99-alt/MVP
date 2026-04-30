@@ -25,6 +25,7 @@
 | Claude API Reviewer 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Claude API QA 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
+| **Run Full Agent Flow** | ✅ 버튼 한 번으로 5단계 순차 실행, Event Log + Debug Panel 반영 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
 | Debug Panel | ✅ Supabase/provider/trace/token/latency 상태 표시 |
@@ -63,6 +64,12 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - **Add Task** — 랜덤 태스크 큐에 추가
 - **Plan with Claude** — 가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획
 - Planner 응답 `steps`를 Task Queue에 자동 반영하고, assigned agent별 mini workflow를 실행
+- **⚡ Run Full Flow** — Planner → Architect → Developer → Reviewer → QA 5단계 순차 실행
+  - 각 단계 결과(summary + key arrays)를 다음 단계의 `taskDescription`으로 전달
+  - Event Log에 `[FLOW]`, `[Planner]`, `[Architect]` 등 단계별 메시지 기록
+  - Debug Panel에 각 단계 `provider`·`model`·`latencyMs`·`inputTokens`·`outputTokens` 업데이트
+  - 완료 시 전체 누적 token + latency 요약을 Debug Panel `last flow`에 표시
+  - 실행 중 버튼 비활성화("Running Flow..."), 단계별 실패 시 Flow 중단 후 앱 계속 동작
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
