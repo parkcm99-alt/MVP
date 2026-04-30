@@ -48,12 +48,15 @@ function withDevDebug(
   debugReason?: string,
   traceRecorded?: boolean,
 ): PlannerAgentResponse {
-  if (process.env.NODE_ENV === 'production') return response;
+  const responseWithTrace = typeof traceRecorded === 'boolean'
+    ? { ...response, traceRecorded }
+    : response;
+
+  if (process.env.NODE_ENV === 'production') return responseWithTrace;
 
   return {
-    ...response,
+    ...responseWithTrace,
     ...(debugReason ? { debugReason } : {}),
-    ...(typeof traceRecorded === 'boolean' ? { traceRecorded } : {}),
   };
 }
 

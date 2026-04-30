@@ -19,9 +19,19 @@ const SENSITIVE_METADATA_KEYS = ['api_key', 'apikey', 'authorization', 'password
 const MAX_SAFE_ERROR_BODY_LENGTH = 600;
 
 function getSupabaseRestConfig(): { url?: string; key?: string } {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const isServer = typeof window === 'undefined';
+
+  if (isServer && !serviceRoleKey) {
+    console.warn('[Supabase] agent_traces insert warning: missing_service_role_key');
+  }
+
   return {
-    url: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    url,
+    key: isServer ? serviceRoleKey ?? publicKey : publicKey,
   };
 }
 
