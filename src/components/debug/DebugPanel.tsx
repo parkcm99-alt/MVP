@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
@@ -94,6 +95,7 @@ export default function DebugPanel() {
               <strong>{formatNullableNumber(planner.outputTokens)}</strong>
             </div>
           </div>
+          <AgentTraceViewer refreshKey={planner.lastPlanAt} />
         </div>
       )}
     </section>
