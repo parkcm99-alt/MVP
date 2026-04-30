@@ -26,6 +26,7 @@
 | Claude API QA 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
 | **Run Full Agent Flow** | ✅ Production 검증 완료 — 5단계 순차 실행, agent_traces 5개 저장 확인 |
+| **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, 5 agent 요약, 토큰/레이턴시, 접기/펼치기 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
 | Debug Panel | ✅ Supabase/provider/trace/token/latency 상태 표시 |
@@ -84,6 +85,12 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
 - **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
 - **Debug Panel** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
+- **Full Flow Summary Panel** — Debug Panel 내에 포함된 접이식 요약 패널. Run Full Flow 실행 후 표시됨
+  - `running` (amber) · `completed` (green) · `failed` (red) 상태 배지
+  - 5개 에이전트별 summary 텍스트, Reviewer `approvalStatus` badge, QA `finalStatus` badge
+  - 총 latency · input tokens · output tokens 메트릭 그리드
+  - 완료 시각 KST `HH:mm:ss` 표시
+  - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록 표시
 - **Agent Trace Viewer** — Debug Panel 안에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
 ### 타입드 이벤트 버스
@@ -246,6 +253,10 @@ Debug Panel에는 접이식 Agent Trace Viewer가 포함되어 있습니다. 브
 | Agent Trace Viewer에 5개 `llm_call` trace 표시 | ✅ 확인 |
 | Supabase `agent_traces`에 planner/architect/developer/reviewer/qa `llm_call` 저장 | ✅ 확인 |
 | 완료 후 Debug Panel `last flow` 누적 token/latency 요약 표시 | ✅ 확인 |
+| Full Flow Summary Panel — running/completed/failed 상태 + 5 agent 요약 | ✅ 구현 완료 |
+| Summary Panel 접기/펼치기 | ✅ 구현 완료 |
+| 실패 시 failedAgent · failReason · completedAgents 표시 | ✅ 구현 완료 |
+| Event Log 최종 요약 메시지 `[FLOW] 전체 실행 완료 — QA / Reviewer / total tokens` | ✅ 구현 완료 |
 
 ### 참고사항
 

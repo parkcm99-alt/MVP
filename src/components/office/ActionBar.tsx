@@ -252,6 +252,7 @@ export default function ActionBar() {
   const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const setLastFlowSummary = useDebugStore(s => s.setLastFlowSummary);
+  const setFullFlowData = useDebugStore(s => s.setFullFlowData);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
 
@@ -268,28 +269,59 @@ export default function ActionBar() {
     const baseDesc  = task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.';
     const sessionId = getSessionId();
 
+    // ── Accumulators (declared before try so inner catches can read them) ──
+    const completedAgents: string[] = [];
+    let plannerSummary:         string | null = null;
+    let architectSummary:       string | null = null;
+    let developerSummary:       string | null = null;
+    let reviewerSummary:        string | null = null;
+    let reviewerApprovalStatus: ReviewerAgentResponse['approvalStatus'] | null = null;
+    let qaSummary:              string | null = null;
+    let qaFinalStatus:          QaAgentResponse['finalStatus'] | null = null;
+    let totalInputTokens  = 0;
+    let totalOutputTokens = 0;
+    let totalLatencyMs    = 0;
+
     function sysLog(msg: string) {
       useSimStore.getState().addEvent({ agentId: 'planner', agentName: 'System', agentColor: '#D97706', type: 'system', message: msg });
     }
 
     function recordStep(u: FlowDebugUpdate) {
       recordAgentResponse({
-        agentId:      u.agentId,
-        provider:     u.provider,
+        agentId:       u.agentId,
+        provider:      u.provider,
         traceRecorded: u.traceRecorded ?? null,
-        model:        u.model ?? null,
-        latencyMs:    u.latencyMs ?? null,
-        inputTokens:  u.inputTokens ?? null,
-        outputTokens: u.outputTokens ?? null,
+        model:         u.model ?? null,
+        latencyMs:     u.latencyMs ?? null,
+        inputTokens:   u.inputTokens ?? null,
+        outputTokens:  u.outputTokens ?? null,
+      });
+    }
+
+    function snapshotFail(agentName: string, reason: string) {
+      setFullFlowData({
+        status: 'failed',
+        plannerSummary, architectSummary, developerSummary,
+        reviewerSummary, reviewerApprovalStatus,
+        qaSummary, qaFinalStatus,
+        totalLatencyMs, totalInputTokens, totalOutputTokens,
+        completedAt: Date.now(),
+        failedAgent: agentName,
+        failReason:  reason,
+        completedAgents: [...completedAgents],
       });
     }
 
     setFlowBusy(true);
+    setFullFlowData({
+      status: 'running',
+      plannerSummary: null, architectSummary: null, developerSummary: null,
+      reviewerSummary: null, reviewerApprovalStatus: null,
+      qaSummary: null, qaFinalStatus: null,
+      totalLatencyMs: 0, totalInputTokens: 0, totalOutputTokens: 0,
+      completedAt: null, failedAgent: null, failReason: null, completedAgents: [],
+    });
     sysLog('[FLOW] Full Agent Flow 시작');
-
-    let totalInputTokens  = 0;
-    let totalOutputTokens = 0;
-    let totalLatencyMs    = 0;
 
     try {
       // ── Step 1: Planner ──────────────────────────────────────────────────
@@ -305,13 +337,15 @@ export default function ActionBar() {
         plannerResult = await res.json() as PlannerAgentResponse;
       } catch {
         sysLog('[FLOW] [Planner] 호출 실패 — Flow 중단');
+        snapshotFail('Planner', '네트워크 오류');
         return;
       }
       recordStep({ agentId: 'planner', provider: plannerResult.provider, traceRecorded: plannerResult.traceRecorded, model: plannerResult.model, latencyMs: plannerResult.latencyMs, inputTokens: plannerResult.inputTokens, outputTokens: plannerResult.outputTokens });
       totalInputTokens  += plannerResult.inputTokens  ?? 0;
       totalOutputTokens += plannerResult.outputTokens ?? 0;
       totalLatencyMs    += plannerResult.latencyMs    ?? 0;
-      const plannerSummary = plannerResult.summary || '(no summary)';
+      plannerSummary = plannerResult.summary || '(no summary)';
+      completedAgents.push('planner');
       sysLog(`[Planner] 계획 완료: ${plannerSummary}`);
       useSimStore.getState().setSpeech('planner', plannerSummary.slice(0, 72));
       eventBus.emit('agent.planning', {
@@ -332,13 +366,15 @@ export default function ActionBar() {
         architectResult = await res.json() as ArchitectAgentResponse;
       } catch {
         sysLog('[FLOW] [Architect] 호출 실패 — Flow 중단');
+        snapshotFail('Architect', '네트워크 오류');
         return;
       }
       recordStep({ agentId: 'architect', provider: architectResult.provider, traceRecorded: architectResult.traceRecorded, model: architectResult.model, latencyMs: architectResult.latencyMs, inputTokens: architectResult.inputTokens, outputTokens: architectResult.outputTokens });
       totalInputTokens  += architectResult.inputTokens  ?? 0;
       totalOutputTokens += architectResult.outputTokens ?? 0;
       totalLatencyMs    += architectResult.latencyMs    ?? 0;
-      const architectSummary = architectResult.summary || '(no summary)';
+      architectSummary = architectResult.summary || '(no summary)';
+      completedAgents.push('architect');
       sysLog(`[Architect] 설계 검토 완료: ${architectSummary}`);
       useSimStore.getState().setSpeech('architect', architectSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'architect', data: { message: architectSummary, taskTitle: baseTitle, provider: architectResult.provider } });
@@ -356,13 +392,15 @@ export default function ActionBar() {
         developerResult = await res.json() as DeveloperAgentResponse;
       } catch {
         sysLog('[FLOW] [Developer] 호출 실패 — Flow 중단');
+        snapshotFail('Developer', '네트워크 오류');
         return;
       }
       recordStep({ agentId: 'developer', provider: developerResult.provider, traceRecorded: developerResult.traceRecorded, model: developerResult.model, latencyMs: developerResult.latencyMs, inputTokens: developerResult.inputTokens, outputTokens: developerResult.outputTokens });
       totalInputTokens  += developerResult.inputTokens  ?? 0;
       totalOutputTokens += developerResult.outputTokens ?? 0;
       totalLatencyMs    += developerResult.latencyMs    ?? 0;
-      const developerSummary = developerResult.summary || '(no summary)';
+      developerSummary = developerResult.summary || '(no summary)';
+      completedAgents.push('developer');
       sysLog(`[Developer] 구현 계획 완료: ${developerSummary}`);
       useSimStore.getState().setSpeech('developer', developerSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'developer', data: { message: developerSummary, taskTitle: baseTitle, provider: developerResult.provider } });
@@ -380,14 +418,17 @@ export default function ActionBar() {
         reviewerResult = await res.json() as ReviewerAgentResponse;
       } catch {
         sysLog('[FLOW] [Reviewer] 호출 실패 — Flow 중단');
+        snapshotFail('Reviewer', '네트워크 오류');
         return;
       }
       recordStep({ agentId: 'reviewer', provider: reviewerResult.provider, traceRecorded: reviewerResult.traceRecorded, model: reviewerResult.model, latencyMs: reviewerResult.latencyMs, inputTokens: reviewerResult.inputTokens, outputTokens: reviewerResult.outputTokens });
       totalInputTokens  += reviewerResult.inputTokens  ?? 0;
       totalOutputTokens += reviewerResult.outputTokens ?? 0;
       totalLatencyMs    += reviewerResult.latencyMs    ?? 0;
-      const reviewerSummary = reviewerResult.summary || '(no summary)';
-      sysLog(`[Reviewer] 리뷰 완료 (${reviewerResult.approvalStatus}): ${reviewerSummary}`);
+      reviewerSummary       = reviewerResult.summary || '(no summary)';
+      reviewerApprovalStatus = reviewerResult.approvalStatus ?? null;
+      completedAgents.push('reviewer');
+      sysLog(`[Reviewer] 리뷰 완료 (${reviewerApprovalStatus}): ${reviewerSummary}`);
       useSimStore.getState().setSpeech('reviewer', reviewerSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'reviewer', data: { message: reviewerSummary, taskTitle: baseTitle, provider: reviewerResult.provider } });
 
@@ -404,21 +445,35 @@ export default function ActionBar() {
         qaResult = await res.json() as QaAgentResponse;
       } catch {
         sysLog('[FLOW] [QA] 호출 실패 — Flow 중단');
+        snapshotFail('QA', '네트워크 오류');
         return;
       }
       recordStep({ agentId: 'qa', provider: qaResult.provider, traceRecorded: qaResult.traceRecorded, model: qaResult.model, latencyMs: qaResult.latencyMs, inputTokens: qaResult.inputTokens, outputTokens: qaResult.outputTokens });
       totalInputTokens  += qaResult.inputTokens  ?? 0;
       totalOutputTokens += qaResult.outputTokens ?? 0;
       totalLatencyMs    += qaResult.latencyMs    ?? 0;
-      const qaSummary = qaResult.summary || '(no summary)';
-      sysLog(`[QA] 검증 완료 (${qaResult.finalStatus}): ${qaSummary}`);
+      qaSummary    = qaResult.summary || '(no summary)';
+      qaFinalStatus = qaResult.finalStatus ?? null;
+      completedAgents.push('qa');
+      sysLog(`[QA] 검증 완료 (${qaFinalStatus}): ${qaSummary}`);
       useSimStore.getState().setSpeech('qa', qaSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'qa', data: { message: qaSummary, taskTitle: baseTitle, provider: qaResult.provider } });
 
       // ── Flow complete ────────────────────────────────────────────────────
-      const flowSummary = `Full Flow 완료 | 총 ${totalInputTokens + totalOutputTokens} tokens | ${totalLatencyMs}ms | ${qaResult.finalStatus}`;
-      setLastFlowSummary(flowSummary);
-      sysLog(`[FLOW] ${flowSummary}`);
+      const completedAt = Date.now();
+      setFullFlowData({
+        status: 'completed',
+        plannerSummary, architectSummary, developerSummary,
+        reviewerSummary, reviewerApprovalStatus,
+        qaSummary, qaFinalStatus,
+        totalLatencyMs, totalInputTokens, totalOutputTokens,
+        completedAt,
+        failedAgent: null, failReason: null,
+        completedAgents: [...completedAgents],
+      });
+      const totalTokens = totalInputTokens + totalOutputTokens;
+      setLastFlowSummary(`완료 | QA: ${qaFinalStatus} | Reviewer: ${reviewerApprovalStatus} | ${totalTokens} tokens`);
+      sysLog(`[FLOW] 전체 실행 완료 — QA: ${qaFinalStatus} / Reviewer: ${reviewerApprovalStatus} / total tokens: ${totalTokens}`);
     } finally {
       // Restore agent states
       (['planner', 'architect', 'developer', 'reviewer', 'qa'] as AgentRole[]).forEach(id => {

@@ -572,7 +572,7 @@ html, body {
 ───────────────────────────────────────────────── */
 .debug-panel {
   flex: none;
-  height: 348px;
+  height: 420px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -751,6 +751,160 @@ html, body {
 .trace-message--unavailable {
   color: #FBBF24;
   border-color: rgba(251,191,36,0.34);
+}
+
+/* ────────────────────────────────────────────────
+   Full Flow Summary Panel
+───────────────────────────────────────────────── */
+.flow-summary {
+  margin-top: 6px;
+  border: 1px solid rgba(217,119,6,0.45);
+  background: rgba(20,10,0,0.70);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.flow-summary--collapsed .flow-summary-header {
+  border-bottom: 0;
+}
+.flow-summary-header {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid rgba(217,119,6,0.3);
+}
+.flow-summary-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  color: #FCD34D;
+  font-family: 'Courier New', monospace;
+  font-size: 8px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  cursor: pointer;
+  padding: 0;
+}
+.flow-summary-status {
+  font-size: 7px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.flow-summary-status--running  { color: #FCD34D; background: rgba(217,119,6,0.18); }
+.flow-summary-status--completed { color: #4ADE80; background: rgba(34,197,94,0.12); }
+.flow-summary-status--failed   { color: #FCA5A5; background: rgba(239,68,68,0.14); }
+.flow-summary-body {
+  padding: 6px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.flow-summary-running {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #FCD34D;
+  font-size: 8px;
+  padding: 3px 0;
+  letter-spacing: 0.3px;
+}
+.flow-summary-agent-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0,1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 16px;
+  font-size: 8px;
+}
+.flow-summary-agent-row .fsa-label {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.flow-summary-agent-row .fsa-summary {
+  color: var(--text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow-summary-agent-row .fsa-badge {
+  font-size: 7px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.fsa-badge--approved        { color: #4ADE80; background: rgba(34,197,94,0.12); }
+.fsa-badge--changes         { color: #FBBF24; background: rgba(251,191,36,0.12); }
+.fsa-badge--info            { color: #94A3B8; background: rgba(100,116,139,0.12); }
+.fsa-badge--passed          { color: #4ADE80; background: rgba(34,197,94,0.12); }
+.fsa-badge--failed          { color: #FCA5A5; background: rgba(239,68,68,0.14); }
+.fsa-badge--needs-testing   { color: #FBBF24; background: rgba(251,191,36,0.12); }
+.fsa-badge--pending         { color: #475569; background: rgba(51,65,85,0.20); }
+.flow-summary-divider {
+  height: 1px;
+  background: rgba(51,65,85,0.55);
+  margin: 2px 0;
+}
+.flow-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 2px;
+}
+.flow-summary-metrics div {
+  background: rgba(15,23,42,0.72);
+  border: 1px solid rgba(51,65,85,0.75);
+  border-radius: 3px;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.flow-summary-metrics span {
+  color: var(--text-dim);
+  font-size: 7px;
+  letter-spacing: 0.3px;
+}
+.flow-summary-metrics strong {
+  color: var(--text-bright);
+  font-size: 9px;
+  font-weight: bold;
+}
+.flow-summary-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 7px;
+  margin-top: 2px;
+}
+.flow-summary-fail {
+  padding: 5px 6px;
+  border: 1px dashed rgba(239,68,68,0.45);
+  border-radius: 2px;
+  font-size: 7px;
+  color: #FCA5A5;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+.flow-summary-fail strong {
+  font-size: 8px;
+  color: #FCA5A5;
+}
+.flow-summary-completed-agents {
+  color: var(--text-muted);
+  font-size: 7px;
 }
 .trace-list {
   max-height: 156px;

@@ -3,6 +3,26 @@ import { getSupabaseConfigStatus } from '@/lib/supabase/client';
 import type { LlmProvider } from '@/lib/llm/types';
 import type { AgentRole } from '@/types';
 
+// ── Full Flow Summary ─────────────────────────────────────────────────────────
+
+export interface FullFlowSummaryData {
+  status: 'running' | 'completed' | 'failed';
+  plannerSummary:          string | null;
+  architectSummary:        string | null;
+  developerSummary:        string | null;
+  reviewerSummary:         string | null;
+  reviewerApprovalStatus:  'approved' | 'changes_requested' | 'needs_more_info' | null;
+  qaSummary:               string | null;
+  qaFinalStatus:           'passed' | 'failed' | 'needs_more_testing' | null;
+  totalLatencyMs:          number;
+  totalInputTokens:        number;
+  totalOutputTokens:       number;
+  completedAt:             number | null;
+  failedAgent:             string | null;
+  failReason:              string | null;
+  completedAgents:         string[];
+}
+
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
 
 interface PlannerDebugSnapshot {
@@ -32,11 +52,13 @@ interface DebugStore {
   lastLlm: PlannerDebugSnapshot;
   traceRefreshAt: number | null;
   lastFlowSummary: string | null;
+  fullFlowData: FullFlowSummaryData | null;
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
   refreshTraces: () => void;
   setLastFlowSummary: (summary: string) => void;
+  setFullFlowData: (data: FullFlowSummaryData) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -58,6 +80,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
   lastLlm: INITIAL_PLANNER_DEBUG,
   traceRefreshAt: null,
   lastFlowSummary: null,
+  fullFlowData: null,
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
@@ -101,4 +124,6 @@ export const useDebugStore = create<DebugStore>((set) => ({
   refreshTraces: () => set({ traceRefreshAt: Date.now() }),
 
   setLastFlowSummary: (summary) => set({ lastFlowSummary: summary }),
+
+  setFullFlowData: (data) => set({ fullFlowData: data }),
 }));

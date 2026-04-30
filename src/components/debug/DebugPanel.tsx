@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
+import FullFlowSummary from '@/components/debug/FullFlowSummary';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
@@ -40,7 +41,6 @@ export default function DebugPanel() {
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const lastLlm = useDebugStore(s => s.lastLlm);
   const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
-  const lastFlowSummary = useDebugStore(s => s.lastFlowSummary);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
   const traceRefreshKey = Math.max(lastLlm.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
@@ -98,12 +98,7 @@ export default function DebugPanel() {
               <strong>{formatNullableNumber(lastLlm.outputTokens)}</strong>
             </div>
           </div>
-          {lastFlowSummary && (
-            <div className="debug-row debug-row-wide">
-              <span>last flow</span>
-              <strong className="debug-value-live" style={{ wordBreak: 'break-word' }}>{lastFlowSummary}</strong>
-            </div>
-          )}
+          <FullFlowSummary />
           <AgentTraceViewer refreshKey={traceRefreshKey} />
         </div>
       )}
