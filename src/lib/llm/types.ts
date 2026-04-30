@@ -128,3 +128,21 @@ export interface DeveloperAgentResponse {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }
+
+export interface ReviewerAgentResponse {
+  ok: boolean;
+  provider: 'mock' | 'claude';
+  role: 'reviewer';
+  summary: string;
+  reviewFindings: string[];
+  suggestedChanges: string[];
+  risks: string[];
+  approvalStatus: 'approved' | 'changes_requested' | 'needs_more_info';
+  nextAgent: 'developer' | 'qa';
+  debugReason?: string;
+  traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}

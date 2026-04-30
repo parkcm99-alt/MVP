@@ -5,7 +5,7 @@ import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import type { ArchitectAgentResponse, DeveloperAgentResponse } from '@/lib/llm/types';
+import type { ArchitectAgentResponse, DeveloperAgentResponse, ReviewerAgentResponse } from '@/lib/llm/types';
 import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
@@ -41,12 +41,18 @@ function buildDeveloperSummary(result: DeveloperAgentResponse): string {
   return plan ? `${result.summary} | ${plan}` : result.summary;
 }
 
+function buildReviewerSummary(result: ReviewerAgentResponse): string {
+  const findings = result.reviewFindings.slice(0, 2).join(' ');
+  return findings ? `${result.summary} | ${findings}` : result.summary;
+}
+
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const [architectBusyTaskId, setArchitectBusyTaskId] = useState<string | null>(null);
   const [developerBusyTaskId, setDeveloperBusyTaskId] = useState<string | null>(null);
+  const [reviewerBusyTaskId, setReviewerBusyTaskId] = useState<string | null>(null);
 
   const grouped: Record<TaskStatus, typeof tasks> = {
     in_progress: tasks.filter(t => t.status === 'in_progress'),
@@ -277,6 +283,124 @@ export default function TaskQueue() {
     }
   }
 
+  async function askReviewer(task: SimTask) {
+    if (reviewerBusyTaskId) return;
+
+    const store = useSimStore.getState();
+    const previousReviewer = store.agents.reviewer;
+    const previousStatus: AgentStatus = previousReviewer.status;
+    const previousTask = previousReviewer.currentTask;
+    const reviewTask = `Review: ${task.title}`;
+
+    setReviewerBusyTaskId(task.id);
+    store.setStatus('reviewer', 'thinking');
+    store.setTask('reviewer', reviewTask);
+    store.setSpeech('reviewer', '코드 리뷰 검토 중...');
+
+    try {
+      const sessionId = getSessionId();
+      const response = await fetch('/api/agents/reviewer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          taskDescription: formatDescription(task.description),
+          sessionId,
+          session_id: sessionId,
+        }),
+      });
+      const result = await response.json() as ReviewerAgentResponse;
+      recordAgentResponse({
+        agentId: 'reviewer',
+        provider: result.provider,
+        traceRecorded: result.traceRecorded ?? false,
+        model: result.model ?? null,
+        latencyMs: result.latencyMs ?? null,
+        inputTokens: result.inputTokens ?? null,
+        outputTokens: result.outputTokens ?? null,
+      });
+
+      const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Reviewer';
+      const summary = result.summary || 'Reviewer 응답이 비어 있습니다.';
+      const reviewFindings = Array.isArray(result.reviewFindings) ? result.reviewFindings : [];
+      const suggestedChanges = Array.isArray(result.suggestedChanges) ? result.suggestedChanges : [];
+      const approvalStatus = result.approvalStatus ?? 'needs_more_info';
+      const speech = `${providerLabel}: ${summary}`.slice(0, 72);
+
+      store.setStatus('reviewer', 'reviewing');
+      store.setSpeech('reviewer', speech);
+      eventBus.emit('agent.message', {
+        agentId: 'reviewer',
+        data: {
+          message: `코드 리뷰 완료: ${buildReviewerSummary({
+            ...result,
+            summary,
+            reviewFindings,
+          })}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+          approvalStatus,
+        },
+      });
+
+      if (suggestedChanges.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'reviewer',
+          data: {
+            message: `수정 권장사항: ${suggestedChanges.slice(0, 4).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      eventBus.emit('agent.message', {
+        agentId: 'reviewer',
+        data: {
+          message: `승인 상태: ${approvalStatus}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+        },
+      });
+
+      refreshTraces();
+      window.setTimeout(() => {
+        if (useSimStore.getState().agents.reviewer.speech === speech) {
+          useSimStore.getState().setSpeech('reviewer', null);
+        }
+      }, 4500);
+    } catch {
+      const speech = 'Reviewer 호출 실패. Mock simulation은 계속 동작합니다.';
+      recordAgentResponse({
+        agentId: 'reviewer',
+        provider: 'mock',
+        traceRecorded: false,
+        model: 'mock-fallback',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+      });
+      eventBus.emit('agent.message', {
+        agentId: 'reviewer',
+        data: {
+          message: `코드 리뷰 완료: ${speech}`,
+          taskTitle: task.title,
+          provider: 'mock',
+        },
+      });
+      store.setSpeech('reviewer', speech);
+    } finally {
+      const reviewer = useSimStore.getState().agents.reviewer;
+      if (reviewer.currentTask === reviewTask) {
+        useSimStore.getState().setStatus('reviewer', previousStatus);
+        useSimStore.getState().setTask('reviewer', previousTask);
+      }
+      setReviewerBusyTaskId(null);
+    }
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -350,6 +474,19 @@ export default function TaskQueue() {
                         title="Developer Claude/mock으로 구현 계획 생성"
                       >
                         {developerBusyTaskId === task.id ? 'Planning...' : 'Ask Developer'}
+                      </button>
+                    </div>
+                  )}
+                  {task.assignedTo === 'reviewer' && task.status !== 'done' && (
+                    <div className="task-card-actions">
+                      <button
+                        className="task-card-ai-btn task-card-ai-btn--reviewer"
+                        type="button"
+                        onClick={() => { void askReviewer(task); }}
+                        disabled={reviewerBusyTaskId !== null}
+                        title="Reviewer Claude/mock으로 코드 리뷰 결과 생성"
+                      >
+                        {reviewerBusyTaskId === task.id ? 'Reviewing...' : 'Ask Reviewer'}
                       </button>
                     </div>
                   )}

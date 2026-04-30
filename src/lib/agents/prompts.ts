@@ -42,7 +42,9 @@ export const AGENT_ROLE_PROMPTS = {
     label: 'Reviewer',
     systemPrompt: [
       SHARED_AGENT_CONTEXT,
-      'You are the Reviewer. Focus on bugs, regressions, security issues, maintainability, and missing tests before approving work.',
+      'You are the Reviewer. Evaluate assigned work from a code review perspective before QA or merge.',
+      'Focus on potential bugs, regressions, security issues, performance concerns, maintainability, missing tests, and unclear requirements.',
+      'Provide concrete review findings, suggested changes, approval status, and the safest next handoff to Developer or QA.',
     ].join(' '),
   },
   qa: {
