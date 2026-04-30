@@ -25,6 +25,20 @@ const META: Record<ConnStatus, { label: string; color: string }> = {
   error:      { label: 'SUPABASE ERROR',        color: '#DC2626' },
 };
 
+const CONN_CHECK_TIMEOUT_MS = 8_000;
+
+async function canReachSupabaseRest(): Promise<boolean> {
+  const sb = getSupabaseClient();
+  if (!sb) return false;
+
+  const { error } = await sb
+    .from('events')
+    .select('id')
+    .limit(1);
+
+  return !error;
+}
+
 export default function ConnectionStatus() {
   const setSupabaseStatus = useDebugStore(s => s.setSupabaseStatus);
   const [status, setStatus] = useState<ConnStatus>(() => {
@@ -44,16 +58,44 @@ export default function ConnectionStatus() {
     const sb = getSupabaseClient();
     if (!sb) return;
 
+    let cancelled = false;
+    let manualClose = false;
+    let timeoutId: number | null = null;
+
+    async function verifyRestFallback() {
+      const restReachable = await canReachSupabaseRest();
+      if (!cancelled) setStatus(restReachable ? 'partial' : 'error');
+    }
+
+    timeoutId = window.setTimeout(() => {
+      void verifyRestFallback();
+    }, CONN_CHECK_TIMEOUT_MS);
+
     const ch = sb.channel('_conn_check').subscribe((state) => {
+      if (cancelled) return;
+
       switch (state) {
-        case 'SUBSCRIBED':    setStatus(s => s === 'partial' ? 'partial' : 'ready'); break;
-        case 'CHANNEL_ERROR': setStatus('error'); break;
-        case 'TIMED_OUT':     setStatus('error'); break;
-        case 'CLOSED':        setStatus('error'); break;
+        case 'SUBSCRIBED':
+          if (timeoutId) window.clearTimeout(timeoutId);
+          setStatus(s => s === 'partial' ? 'partial' : 'ready');
+          break;
+        case 'CHANNEL_ERROR':
+        case 'TIMED_OUT':
+          if (timeoutId) window.clearTimeout(timeoutId);
+          void verifyRestFallback();
+          break;
+        case 'CLOSED':
+          if (!manualClose) void verifyRestFallback();
+          break;
       }
     });
 
-    return () => { void sb.removeChannel(ch); };
+    return () => {
+      cancelled = true;
+      manualClose = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+      void sb.removeChannel(ch);
+    };
   }, []);
 
   // Persistence error subscription — setStatus only called from the async callback,
