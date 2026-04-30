@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase/client';
+import { getSupabaseClient, getSupabaseConfigStatus, isSupabaseConfigured } from '@/lib/supabase/client';
 import { onPersistenceErrorChange } from '@/lib/supabase/errorTracker';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
@@ -19,6 +19,7 @@ type ConnStatus = SupabaseDebugStatus;
 
 const META: Record<ConnStatus, { label: string; color: string }> = {
   mock:       { label: 'MOCK MODE',            color: '#475569' },
+  misconfigured: { label: 'SUPABASE CONFIG ERR', color: '#F97316' },
   connecting: { label: 'SUPABASE...',           color: '#D97706' },
   ready:      { label: 'SUPABASE LIVE',         color: '#16A34A' },
   partial:    { label: 'SUPABASE PARTIAL ERR',  color: '#CA8A04' },
@@ -42,7 +43,9 @@ async function canReachSupabaseRest(): Promise<boolean> {
 export default function ConnectionStatus() {
   const setSupabaseStatus = useDebugStore(s => s.setSupabaseStatus);
   const [status, setStatus] = useState<ConnStatus>(() => {
-    if (!isSupabaseConfigured)    return 'mock';
+    const configStatus = getSupabaseConfigStatus();
+    if (configStatus === 'missing') return 'mock';
+    if (configStatus !== 'ready') return 'misconfigured';
     if (!getSupabaseClient())     return 'error';
     return 'connecting';
   });

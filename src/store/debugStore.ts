@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import { isSupabaseConfigured } from '@/lib/supabase/client';
+import { getSupabaseConfigStatus } from '@/lib/supabase/client';
 import type { LlmProvider } from '@/lib/llm/types';
 
-export type SupabaseDebugStatus = 'mock' | 'connecting' | 'ready' | 'partial' | 'error';
+export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
 
 interface PlannerDebugSnapshot {
   provider: LlmProvider | null;
@@ -41,7 +41,9 @@ const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
 };
 
 export const useDebugStore = create<DebugStore>((set) => ({
-  supabaseStatus: isSupabaseConfigured ? 'connecting' : 'mock',
+  supabaseStatus: getSupabaseConfigStatus() === 'ready'
+    ? 'connecting'
+    : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
   planner: INITIAL_PLANNER_DEBUG,
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),

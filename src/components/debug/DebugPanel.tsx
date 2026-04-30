@@ -6,6 +6,7 @@ import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
 const SUPABASE_META: Record<SupabaseDebugStatus, { label: string; color: string }> = {
   mock:       { label: 'mock', color: '#64748B' },
+  misconfigured: { label: 'config error', color: '#F97316' },
   connecting: { label: 'connecting', color: '#D97706' },
   ready:      { label: 'live', color: '#22C55E' },
   partial:    { label: 'partial', color: '#F59E0B' },

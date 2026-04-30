@@ -277,6 +277,8 @@ cp .env.example .env.local
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
 | `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (`agent_traces.llm_call` insert 우선 키) |
 
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 Supabase anon JWT만 넣습니다. `sk-ant-...` 같은 Claude/Anthropic key나 service role key를 넣으면 브라우저 번들에 노출되고 Supabase client가 `Invalid API key`로 실패합니다. 실수로 노출했다면 해당 provider key를 즉시 rotate하세요.
+
 ### 2. 스키마 적용
 
 Supabase Dashboard → SQL Editor에서 [`docs/supabase-schema.md`](docs/supabase-schema.md)의 SQL을 순서대로 실행합니다.
