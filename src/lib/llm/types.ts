@@ -93,3 +93,20 @@ export interface PlannerAgentResponse {
   inputTokens?: number | null;
   outputTokens?: number | null;
 }
+
+export interface ArchitectAgentResponse {
+  ok: boolean;
+  provider: 'mock' | 'claude';
+  role: 'architect';
+  summary: string;
+  architectureNotes: string[];
+  dataFlow: string[];
+  risks: string[];
+  nextAgent: 'developer' | 'reviewer' | 'qa';
+  debugReason?: string;
+  traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}

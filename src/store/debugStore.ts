@@ -26,8 +26,10 @@ interface PlannerDebugUpdate {
 interface DebugStore {
   supabaseStatus: SupabaseDebugStatus;
   planner: PlannerDebugSnapshot;
+  traceRefreshAt: number | null;
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
+  refreshTraces: () => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -45,6 +47,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
     ? 'connecting'
     : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
   planner: INITIAL_PLANNER_DEBUG,
+  traceRefreshAt: null,
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
@@ -60,4 +63,6 @@ export const useDebugStore = create<DebugStore>((set) => ({
         outputTokens: update.outputTokens ?? null,
       },
     }),
+
+  refreshTraces: () => set({ traceRefreshAt: Date.now() }),
 }));

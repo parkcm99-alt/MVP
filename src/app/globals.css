@@ -458,6 +458,39 @@ html, body {
 .panel-body::-webkit-scrollbar-track { background: transparent; }
 .panel-body::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
 
+.task-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.task-card-ai-btn {
+  font-family: 'Courier New', monospace;
+  font-size: 8px;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  padding: 3px 7px;
+  border-radius: 2px;
+  cursor: pointer;
+  background: rgba(15,23,42,0.84);
+  transition: background 0.1s, color 0.1s, transform 0.1s;
+}
+.task-card-ai-btn--architect {
+  border: 1px solid #34D399;
+  color: #5EEAD4;
+  box-shadow: 0 0 9px rgba(20,184,166,0.08);
+}
+.task-card-ai-btn:hover:not(:disabled) {
+  background: rgba(20,184,166,0.13);
+  color: #CCFBF1;
+}
+.task-card-ai-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.task-card-ai-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
 /* collapse button in panel headers */
 .panel-collapse-btn {
   font-family: 'Courier New', monospace;

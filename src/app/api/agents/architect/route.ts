@@ -3,52 +3,73 @@ import { claudeClient } from '@/lib/llm/claudeClient';
 import { parseLlmJsonObject } from '@/lib/llm/json';
 import { mockClaude } from '@/lib/llm/mockClaude';
 import { insertAgentTrace } from '@/lib/supabase/traces';
-import type { LlmResponse, PlannerAgentResponse } from '@/lib/llm/types';
+import type { ArchitectAgentResponse, LlmResponse } from '@/lib/llm/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-interface PlannerRequestBody {
+interface ArchitectRequestBody {
   taskTitle?: unknown;
   taskDescription?: unknown;
   sessionId?: unknown;
   session_id?: unknown;
 }
 
-const ROLE = 'planner' as const;
+const ROLE = 'architect' as const;
+const NEXT_AGENTS = ['developer', 'reviewer', 'qa'] as const;
 
-function normalizeText(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 600) : fallback;
+function normalizeText(value: unknown, fallback: string, maxLength = 700): string {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : fallback;
 }
 
 function normalizeSessionId(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function safePlannerResponse(
-  patch: Partial<PlannerAgentResponse> = {},
-): PlannerAgentResponse {
+function normalizeNextAgent(value: unknown): ArchitectAgentResponse['nextAgent'] {
+  if (typeof value !== 'string') return 'developer';
+  const normalized = value.trim().toLowerCase();
+  return NEXT_AGENTS.includes(normalized as ArchitectAgentResponse['nextAgent'])
+    ? normalized as ArchitectAgentResponse['nextAgent']
+    : 'developer';
+}
+
+function arrayOfStrings(value: unknown, fallback: string[], maxItems = 4): string[] {
+  if (!Array.isArray(value)) return fallback;
+  const cleaned = value
+    .filter((item): item is string => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+  return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function safeArchitectResponse(
+  patch: Partial<ArchitectAgentResponse> = {},
+): ArchitectAgentResponse {
   return {
     ok: true,
     provider: 'mock',
     role: ROLE,
-    summary: 'Planner가 mock 모드에서 스프린트 작업을 점검했습니다.',
-    steps: [
-      '요구사항을 작게 나누고 우선순위를 확인합니다.',
-      'Architect에게 구현 경계와 데이터 흐름 검토를 넘깁니다.',
-      'Developer/QA가 바로 착수할 수 있도록 완료 기준을 정리합니다.',
+    summary: 'Architect가 mock 모드에서 시스템 구조를 점검했습니다.',
+    architectureNotes: [
+      'UI, API route, Supabase persistence 경계를 분리해 유지합니다.',
+      'Planner 외 에이전트는 아직 mock workflow를 유지합니다.',
     ],
-    risks: ['요구사항 범위가 넓으면 일정 추정이 흔들릴 수 있습니다.'],
-    nextAgent: 'architect',
+    dataFlow: [
+      'Task Queue → server route → Claude/mock response → Event Log/Supabase traces',
+    ],
+    risks: ['환경변수 또는 RLS 설정이 맞지 않으면 trace 조회가 실패할 수 있습니다.'],
+    nextAgent: 'developer',
     ...patch,
   };
 }
 
 function withDevDebug(
-  response: PlannerAgentResponse,
+  response: ArchitectAgentResponse,
   debugReason?: string,
   traceRecorded?: boolean,
-): PlannerAgentResponse {
+): ArchitectAgentResponse {
   const responseWithTrace = typeof traceRecorded === 'boolean'
     ? { ...response, traceRecorded }
     : response;
@@ -61,12 +82,12 @@ function withDevDebug(
   };
 }
 
-function withPlannerTelemetry(
-  response: PlannerAgentResponse,
+function withArchitectTelemetry(
+  response: ArchitectAgentResponse,
   llm: LlmResponse,
   traceRecorded: boolean | undefined,
   latencyMs: number | null,
-): PlannerAgentResponse {
+): ArchitectAgentResponse {
   return {
     ...response,
     traceRecorded: traceRecorded ?? response.traceRecorded ?? false,
@@ -77,41 +98,31 @@ function withPlannerTelemetry(
   };
 }
 
-function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false): string[] {
-  if (!Array.isArray(value)) return fallback;
-  const cleaned = value
-    .filter((item): item is string => typeof item === 'string')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .slice(0, 4);
-  if (allowEmpty) return cleaned;
-  return cleaned.length > 0 ? cleaned : fallback;
-}
-
-function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
-  const fallback = safePlannerResponse({
+function parseArchitectContent(llm: LlmResponse): {
+  response: ArchitectAgentResponse;
+  debugReason?: string;
+} {
+  const fallback = safeArchitectResponse({
     provider: llm.provider,
-    summary: normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
+    summary: normalizeText(llm.content, 'Architect 응답을 JSON으로 파싱하지 못했습니다.'),
   });
 
   try {
     const parsed = parseLlmJsonObject(llm.content);
     const summary = normalizeText(parsed.summary, '');
-    const steps = arrayOfStrings(parsed.steps, [], true);
-    const risks = arrayOfStrings(parsed.risks, [], true).slice(0, 3);
-    const nextAgent = normalizeText(parsed.nextAgent, '');
 
-    if (!summary || steps.length === 0 || !nextAgent) {
+    if (!summary) {
       return { response: fallback, debugReason: 'json_parse_failed' };
     }
 
     return {
-      response: safePlannerResponse({
+      response: safeArchitectResponse({
         provider: llm.provider,
         summary,
-        steps,
-        risks,
-        nextAgent: nextAgent.toLowerCase(),
+        architectureNotes: arrayOfStrings(parsed.architectureNotes, fallback.architectureNotes),
+        dataFlow: arrayOfStrings(parsed.dataFlow, fallback.dataFlow),
+        risks: arrayOfStrings(parsed.risks, [], 3),
+        nextAgent: normalizeNextAgent(parsed.nextAgent),
       }),
     };
   } catch {
@@ -122,7 +133,7 @@ function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse
   }
 }
 
-function buildPlannerSystemPrompt(basePrompt: string): string {
+function buildArchitectSystemPrompt(basePrompt: string): string {
   return [
     basePrompt,
     'You must return raw JSON only.',
@@ -131,21 +142,26 @@ function buildPlannerSystemPrompt(basePrompt: string): string {
     'Do not add prose before or after the JSON object.',
     'The entire response must be parseable by JSON.parse.',
     'Use exactly this JSON object shape:',
-    '{"summary":"string","steps":["string"],"risks":["string"],"nextAgent":"architect"}',
-    'Use nextAgent="architect" unless the task is already fully planned.',
+    '{"summary":"string","architectureNotes":["string"],"dataFlow":["string"],"risks":["string"],"nextAgent":"developer"}',
+    'nextAgent must be exactly one of: developer, reviewer, qa.',
+    'Keep each array item concise and implementation-oriented.',
   ].join('\n');
 }
 
-function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean, latencyMs: number | null = null) {
-  const parsed = parsePlannerContent(llm);
+function respondWithArchitectContent(
+  llm: LlmResponse,
+  traceRecorded?: boolean,
+  latencyMs: number | null = null,
+) {
+  const parsed = parseArchitectContent(llm);
   return Response.json(withDevDebug(
-    withPlannerTelemetry(parsed.response, llm, traceRecorded, latencyMs),
+    withArchitectTelemetry(parsed.response, llm, traceRecorded, latencyMs),
     parsed.debugReason ?? llm.fallbackReason,
     traceRecorded,
   ));
 }
 
-async function recordPlannerLlmTrace(
+async function recordArchitectLlmTrace(
   llm: LlmResponse,
   taskTitle: string,
   latencyMs: number,
@@ -154,7 +170,7 @@ async function recordPlannerLlmTrace(
   if (llm.provider !== 'claude') return false;
 
   try {
-    const traceRecorded = await insertAgentTrace({
+    return await insertAgentTrace({
       sessionId,
       agentId: ROLE,
       traceType: 'llm_call',
@@ -167,14 +183,16 @@ async function recordPlannerLlmTrace(
         taskTitle,
       },
     });
-    return traceRecorded;
   } catch {
-    console.warn('[Supabase] planner llm_call trace failed: trace_insert_failed');
+    console.warn('[Supabase] architect llm_call trace failed: trace_insert_failed');
     return false;
   }
 }
 
-async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
+async function buildMockResponse(
+  taskTitle: string,
+  taskDescription: string,
+): Promise<ArchitectAgentResponse> {
   const mock = await mockClaude.complete({
     agentRole: ROLE,
     messages: [
@@ -186,7 +204,7 @@ async function buildMockResponse(taskTitle: string, taskDescription: string): Pr
     maxTokens: 220,
   });
 
-  return safePlannerResponse({
+  return safeArchitectResponse({
     summary: mock.content,
     provider: 'mock',
     traceRecorded: false,
@@ -198,13 +216,13 @@ async function buildMockResponse(taskTitle: string, taskDescription: string): Pr
 }
 
 export async function POST(request: Request) {
-  let body: PlannerRequestBody;
+  let body: ArchitectRequestBody;
 
   try {
-    body = await request.json() as PlannerRequestBody;
+    body = await request.json() as ArchitectRequestBody;
   } catch {
     return Response.json(
-      safePlannerResponse({
+      safeArchitectResponse({
         ok: false,
         summary: 'Invalid JSON body. Expected { taskTitle, taskDescription }.',
       }),
@@ -212,10 +230,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const taskTitle = normalizeText(body.taskTitle, 'Sprint planning');
+  const taskTitle = normalizeText(body.taskTitle, 'Architecture review');
   const taskDescription = normalizeText(
     body.taskDescription,
-    'Review the current sprint and suggest the safest next handoff.',
+    'Review the current task and produce architecture guidance before implementation.',
+    1400,
   );
   const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
 
@@ -239,27 +258,28 @@ export async function POST(request: Request) {
     ));
   }
 
-  const plannerPrompt = getAgentRolePrompt(ROLE);
+  const architectPrompt = getAgentRolePrompt(ROLE);
   const claudeStartedAt = Date.now();
   const llm = await claudeClient.complete({
     agentRole: ROLE,
-    systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt),
+    systemPrompt: buildArchitectSystemPrompt(architectPrompt.systemPrompt),
     messages: [
       {
         role: 'user',
         content: [
           `Task title: ${taskTitle}`,
           `Task description: ${taskDescription}`,
-          'Create a short planning summary, 2-4 execution steps, 0-3 risks, and the next agent.',
+          'Create a concise architecture review for this task.',
+          'Include system structure notes, data flow, API/DB boundary concerns, implementation risks, and next agent recommendation.',
           'Return only the JSON object. No markdown. No code fences.',
         ].join('\n'),
       },
     ],
-    maxTokens: 320,
+    maxTokens: 360,
   });
   const claudeLatencyMs = Date.now() - claudeStartedAt;
 
-  const traceRecorded = await recordPlannerLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
+  const traceRecorded = await recordArchitectLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
 
-  return respondWithPlannerContent(llm, traceRecorded, claudeLatencyMs);
+  return respondWithArchitectContent(llm, traceRecorded, claudeLatencyMs);
 }

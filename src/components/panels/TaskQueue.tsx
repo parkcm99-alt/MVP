@@ -1,7 +1,12 @@
 'use client';
 
+import { useState } from 'react';
+import { eventBus } from '@/lib/simulation/eventBus';
+import { getSessionId } from '@/lib/supabase/session';
 import { useSimStore } from '@/store/simulationStore';
-import type { TaskPriority, TaskStatus } from '@/types';
+import { useDebugStore } from '@/store/debugStore';
+import type { ArchitectAgentResponse } from '@/lib/llm/types';
+import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
   backlog:     { bg: '#1E293B', text: '#94A3B8', label: 'BACKLOG' },
@@ -26,8 +31,15 @@ function formatDescription(description: string): string {
   return description;
 }
 
+function buildArchitectureSummary(result: ArchitectAgentResponse): string {
+  const notes = result.architectureNotes.slice(0, 2).join(' ');
+  return notes ? `${result.summary} | ${notes}` : result.summary;
+}
+
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
+  const refreshTraces = useDebugStore(s => s.refreshTraces);
+  const [architectBusyTaskId, setArchitectBusyTaskId] = useState<string | null>(null);
 
   const grouped: Record<TaskStatus, typeof tasks> = {
     in_progress: tasks.filter(t => t.status === 'in_progress'),
@@ -35,6 +47,92 @@ export default function TaskQueue() {
     backlog:     tasks.filter(t => t.status === 'backlog'),
     done:        tasks.filter(t => t.status === 'done'),
   };
+
+  async function askArchitect(task: SimTask) {
+    if (architectBusyTaskId) return;
+
+    const store = useSimStore.getState();
+    const previousArchitect = store.agents.architect;
+    const previousStatus: AgentStatus = previousArchitect.status;
+    const previousTask = previousArchitect.currentTask;
+    const reviewTask = `Architecture: ${task.title}`;
+
+    setArchitectBusyTaskId(task.id);
+    store.setStatus('architect', 'thinking');
+    store.setTask('architect', reviewTask);
+    store.setSpeech('architect', '시스템 구조 검토 중...');
+
+    try {
+      const sessionId = getSessionId();
+      const response = await fetch('/api/agents/architect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          taskDescription: formatDescription(task.description),
+          sessionId,
+          session_id: sessionId,
+        }),
+      });
+      const result = await response.json() as ArchitectAgentResponse;
+      const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Architect';
+      const summary = result.summary || 'Architect 응답이 비어 있습니다.';
+      const architectureNotes = Array.isArray(result.architectureNotes) ? result.architectureNotes : [];
+      const speech = `${providerLabel}: ${summary}`.slice(0, 72);
+
+      store.setStatus('architect', 'reviewing');
+      store.setSpeech('architect', speech);
+      eventBus.emit('agent.message', {
+        agentId: 'architect',
+        data: {
+          message: `설계 검토 완료: ${buildArchitectureSummary({
+            ...result,
+            summary,
+            architectureNotes,
+          })}`,
+          taskTitle: task.title,
+          provider: result.provider,
+          nextAgent: result.nextAgent,
+        },
+      });
+
+      if (architectureNotes.length > 0) {
+        eventBus.emit('agent.message', {
+          agentId: 'architect',
+          data: {
+            message: `Architecture notes: ${architectureNotes.slice(0, 3).join(' / ')}`,
+            taskTitle: task.title,
+            provider: result.provider,
+          },
+        });
+      }
+
+      refreshTraces();
+      window.setTimeout(() => {
+        if (useSimStore.getState().agents.architect.speech === speech) {
+          useSimStore.getState().setSpeech('architect', null);
+        }
+      }, 4500);
+    } catch {
+      const speech = 'Architect 호출 실패. Mock simulation은 계속 동작합니다.';
+      eventBus.emit('agent.message', {
+        agentId: 'architect',
+        data: {
+          message: `설계 검토 완료: ${speech}`,
+          taskTitle: task.title,
+          provider: 'mock',
+        },
+      });
+      store.setSpeech('architect', speech);
+    } finally {
+      const architect = useSimStore.getState().agents.architect;
+      if (architect.currentTask === reviewTask) {
+        useSimStore.getState().setStatus('architect', previousStatus);
+        useSimStore.getState().setTask('architect', previousTask);
+      }
+      setArchitectBusyTaskId(null);
+    }
+  }
 
   return (
     <div className="panel">
@@ -86,6 +184,19 @@ export default function TaskQueue() {
                       </span>
                     )}
                   </div>
+                  {task.assignedTo === 'architect' && task.status !== 'done' && (
+                    <div className="task-card-actions">
+                      <button
+                        className="task-card-ai-btn task-card-ai-btn--architect"
+                        type="button"
+                        onClick={() => { void askArchitect(task); }}
+                        disabled={architectBusyTaskId !== null}
+                        title="Architect Claude/mock으로 시스템 설계 검토"
+                      >
+                        {architectBusyTaskId === task.id ? 'Reviewing...' : 'Ask Architect'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

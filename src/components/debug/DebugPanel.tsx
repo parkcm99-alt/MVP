@@ -39,7 +39,9 @@ export default function DebugPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const planner = useDebugStore(s => s.planner);
+  const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
+  const traceRefreshKey = Math.max(planner.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
   return (
     <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
@@ -95,7 +97,7 @@ export default function DebugPanel() {
               <strong>{formatNullableNumber(planner.outputTokens)}</strong>
             </div>
           </div>
-          <AgentTraceViewer refreshKey={planner.lastPlanAt} />
+          <AgentTraceViewer refreshKey={traceRefreshKey} />
         </div>
       )}
     </section>
