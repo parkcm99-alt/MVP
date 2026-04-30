@@ -4,6 +4,7 @@ import AgentStatus from '@/components/panels/AgentStatus';
 import EventLog from '@/components/panels/EventLog';
 import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 import ConnectionStatus from '@/components/debug/ConnectionStatus';
+import DebugPanel from '@/components/debug/DebugPanel';
 import RealtimeSyncClient from '@/components/RealtimeSyncClient';
 
 export default function Page() {
@@ -34,6 +35,7 @@ export default function Page() {
           <TaskQueue />
           <AgentStatus />
           <WorkflowGraph />
+          <DebugPanel />
         </div>
 
       </div>

@@ -499,6 +499,98 @@ html, body {
 .cmd-center .react-flow__node:focus        { outline: none; }
 .cmd-center .react-flow__handle           { border: none !important; background: transparent !important; }
 
+/* ────────────────────────────────────────────────
+   Debug Panel
+───────────────────────────────────────────────── */
+.debug-panel {
+  flex: none;
+  height: 176px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid var(--border-bright);
+  background:
+    linear-gradient(135deg, rgba(56,189,248,0.08), transparent 42%),
+    #050A12;
+}
+.debug-panel--collapsed { height: 30px; }
+.debug-panel-header {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: bold;
+  letter-spacing: 1.6px;
+}
+.debug-panel-body {
+  flex: 1;
+  padding: 8px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow: hidden;
+}
+.debug-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 15px;
+  font-size: 9px;
+}
+.debug-row span,
+.debug-metrics span {
+  color: var(--text-dim);
+}
+.debug-row strong,
+.debug-metrics strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-bright);
+  font-size: 9px;
+  font-weight: bold;
+}
+.debug-row-wide strong {
+  font-size: 8px;
+}
+.debug-value-live {
+  color: #67E8F9 !important;
+}
+.debug-value-muted {
+  color: var(--text-muted) !important;
+}
+.debug-value-warning {
+  color: #FBBF24 !important;
+  text-shadow: 0 0 7px rgba(251,191,36,0.18);
+}
+.debug-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 3px;
+}
+.debug-metrics div {
+  min-width: 0;
+  background: rgba(15,23,42,0.72);
+  border: 1px solid rgba(51,65,85,0.75);
+  border-radius: 3px;
+  padding: 4px 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.debug-metrics span {
+  font-size: 7px;
+  letter-spacing: 0.3px;
+}
+
 /* ── Workflow tooltip (selected agent info) ─── */
 .wf-tooltip {
   position: absolute;

@@ -17,8 +17,13 @@
 | tasks 테이블 저장 | ✅ 확인 |
 | 멀티 브라우저 Realtime 동기화 | ✅ 테스트 완료 |
 | Event Log KST 시간 표시 | ✅ 확인 |
+| Event Log 표시 제한 | ✅ 200개 렌더링 제한 |
 | MOCK MODE fallback | ✅ 동작 |
-| Claude API Planner 1단계 | ✅ 서버 route + mock fallback, live 기본 OFF |
+| Claude API Planner 1단계 | ✅ Production live 호출 성공 (`provider:"claude"`) |
+| Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
+| Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
+| agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
+| Debug Panel | ✅ Supabase/provider/trace/token/latency 상태 표시 |
 
 ---
 
@@ -26,7 +31,7 @@
 
 5명의 AI 에이전트(Planner, Architect, Developer, Reviewer, QA)가 오피스에서 스프린트를 진행하는 모습을 픽셀아트로 시각화한 시뮬레이션입니다.
 
-실제 Claude API·AgentOps 연동 이전에 UI/UX와 워크플로우 구조를 확정하기 위한 Visual Layer MVP입니다.
+Planner는 서버 전용 API route를 통해 Claude live 호출까지 연결되었고, Architect / Developer / Reviewer / QA는 아직 mock workflow를 유지합니다. AgentOps, OpenAI, LangGraph, CrewAI 실제 연동은 아직 하지 않았습니다.
 
 ---
 
@@ -52,6 +57,7 @@
 - **Call Meeting** — 전체 미팅 소집
 - **Add Task** — 랜덤 태스크 큐에 추가
 - **Plan with Claude** — 가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획
+- Planner 응답 `steps`를 Task Queue에 자동 반영하고, assigned agent별 mini workflow를 실행
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
@@ -59,7 +65,9 @@
 - **Task Queue** — 태스크 상태(backlog/in-progress/review/done)·담당자 표시
 - **Agent Status** — 에이전트별 현재 상태·현재 태스크·완료 수
 - **Event Log** — 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
+- Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
 - **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
+- **Debug Panel** — Supabase 상태, 마지막 Planner provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
 
 ### 타입드 이벤트 버스
 `src/lib/simulation/eventBus.ts`에 8종 이벤트 정의:
@@ -76,6 +84,7 @@
 | `events` | INSERT (append-only) | session_id 필터 | ✅ |
 | `agents` | UPSERT (id, session_id) | 동일 row 덮어쓰기 | ✅ |
 | `tasks` | UPSERT (id) | 동일 row 덮어쓰기 | ✅ |
+| `agent_traces` | INSERT (append-only) | trace_type별 metadata | ✅ |
 
 ### 저장 필드
 
@@ -84,6 +93,8 @@
 **tasks**: `id` · `session_id` · `title` · `description` · `assigned_to` · `status` · `priority`
 
 **events**: `id` · `session_id` · `agent_id` · `agent_name` · `agent_color` · `type` · `message` · `metadata`
+
+**agent_traces**: `id` · `session_id` · `agent_id` · `trace_type` · `input_tokens` · `output_tokens` · `latency_ms` · `model` · `metadata`
 
 ### 아키텍처
 
@@ -126,13 +137,17 @@ useRealtimeSync (외부 세션 수신 시)
 |------|------|
 | `@anthropic-ai/sdk` dependency | ✅ 추가 |
 | Planner API route | ✅ `POST /api/agents/planner` |
-| 요청 body | ✅ `{ taskTitle, taskDescription }` |
-| 응답 형식 | ✅ `ok`, `provider`, `role`, `summary`, `steps`, `risks`, `nextAgent` |
+| 요청 body | ✅ `{ taskTitle, taskDescription, sessionId }` (`session_id`도 호환) |
+| 응답 형식 | ✅ `ok`, `provider`, `role`, `summary`, `steps`, `risks`, `nextAgent`, `traceRecorded` |
 | live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
 | 기본 동작 | ✅ `ENABLE_LIVE_LLM=false` 이면 mock fallback |
 | 서버 전용 키 | ✅ `ANTHROPIC_API_KEY`는 `NEXT_PUBLIC_` 없이 서버에서만 사용 |
 | Planner UI 테스트 | ✅ ActionBar `Plan with Claude` 버튼 |
 | Supabase events 저장 | ✅ `agent.planning` 이벤트로 summary/steps 저장 시도, 실패해도 앱 유지 |
+| Task Queue 반영 | ✅ Planner steps 기반 하위 task 자동 생성 |
+| Mini workflow | ✅ assigned agent 상태 변경 → task done 처리 |
+| Trace 기록 | ✅ Claude 성공 시 `llm_call`, task handoff/start 시 `handoff`/`decision` |
+| Debug Panel | ✅ `/api/agents/planner` 응답의 provider/trace/model/token/latency 표시 |
 | LLM 공통 타입 | ✅ `src/lib/llm/types.ts` |
 | Mock Claude 응답 | ✅ `src/lib/llm/mockClaude.ts` — 네트워크/API 호출 없음 |
 | Claude client | ✅ `src/lib/llm/claudeClient.ts` — `server-only`, timeout/max token 제한, 안전 fallback |
@@ -145,10 +160,12 @@ useRealtimeSync (외부 세션 수신 시)
 ANTHROPIC_API_KEY=
 ENABLE_LIVE_LLM=false
 CLAUDE_MODEL=
+SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 `ANTHROPIC_API_KEY`는 서버 전용입니다. `NEXT_PUBLIC_ANTHROPIC_API_KEY` 같은 브라우저 노출 변수는 만들지 않습니다.
 `CLAUDE_MODEL`을 비워두면 서버 코드가 `claude-sonnet-4-20250514`를 사용합니다. 설정한 모델이 `model_not_found`로 실패하면 이 안정적인 기본 모델로 한 번 재시도합니다.
+`SUPABASE_SERVICE_ROLE_KEY`도 서버 전용입니다. Production의 `/api/agents/planner`에서 `llm_call` trace를 안정적으로 저장할 때 우선 사용하며, 브라우저에는 절대 노출하지 않습니다.
 
 ### 실제 호출 켜기
 
@@ -158,9 +175,11 @@ CLAUDE_MODEL=
 ANTHROPIC_API_KEY=sk-ant-...
 ENABLE_LIVE_LLM=true
 CLAUDE_MODEL=claude-sonnet-4-6
+SUPABASE_SERVICE_ROLE_KEY=<supabase-service-role-key>
 ```
 
 `ENABLE_LIVE_LLM=false`이거나 `ANTHROPIC_API_KEY`가 비어 있으면 항상 mock 응답을 반환합니다. live 호출은 비용이 발생할 수 있으므로 테스트할 때만 `true`로 바꾸세요.
+Planner API 응답에서 `provider:"claude"`와 `traceRecorded:true`가 함께 나오면 Claude live 호출과 `agent_traces.llm_call` 저장이 모두 성공한 상태입니다.
 
 ### Agent Trace 기록
 
@@ -168,11 +187,13 @@ CLAUDE_MODEL=claude-sonnet-4-6
 
 | trace_type | 기록 시점 |
 |------------|-----------|
-| `llm_call` | Planner가 서버 route에서 Claude live 호출에 성공했을 때 token/latency/model 기록 |
+| `llm_call` | Planner가 서버 route에서 Claude live 호출에 성공했을 때 token/latency/model 기록 (`SUPABASE_SERVICE_ROLE_KEY` 우선 사용) |
 | `handoff` | Planner 응답 steps로 만든 하위 task를 담당 에이전트에게 넘길 때 기록 |
 | `decision` | Planner-generated task를 담당 에이전트가 시작할 때 기록 |
 
 이 구조는 나중에 AgentOps SDK를 붙일 때 동일한 trace 이벤트를 외부 관측 시스템으로 확장할 수 있도록 만든 scaffolding입니다. 현재는 OpenAI, AgentOps, LangGraph, CrewAI 실제 연결을 하지 않습니다.
+
+trace 저장은 실패해도 Planner 응답과 UI workflow를 막지 않습니다. 실패 시 Vercel Logs에는 status code와 redacted response body만 출력되며, API key 값은 로그/응답/metadata에 남기지 않습니다.
 
 ---
 
@@ -254,7 +275,7 @@ cp .env.example .env.local
 |------|------|------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
-| `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (admin 작업) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (`agent_traces.llm_call` insert 우선 키) |
 
 ### 2. 스키마 적용
 
@@ -269,6 +290,7 @@ npx supabase gen types typescript --project-id <ref> > src/lib/supabase/types.ts
 ### 4. Vercel 배포
 
 Vercel Dashboard → Project → Settings → Environment Variables에서 동일한 변수를 설정합니다.
+`SUPABASE_SERVICE_ROLE_KEY`는 Production/Preview/Development 중 필요한 환경에 서버 전용으로 추가하고, `NEXT_PUBLIC_` prefix를 붙이지 않습니다.
 배포 후 화면 상단에 **SUPABASE LIVE** (초록) 배지가 표시되면 연결 성공입니다.
 
 ---
@@ -277,14 +299,16 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 
 ### Phase 3 — AgentOps Tracing
 - `agent_traces` 테이블 실데이터 연결 완료 (`llm_call`, `handoff`, `decision`)
+- Production `llm_call` 저장은 `SUPABASE_SERVICE_ROLE_KEY` 우선 사용
 - LLM 호출 레이턴시·토큰 수 시각화
 - 에이전트 클릭 카드 Trace 섹션 실연결
 - AgentOps SDK 연동
 
 ### Phase 4 — Claude API Single-Agent Integration
-- Planner API route 1단계 완료 (`ENABLE_LIVE_LLM` gate + mock fallback)
-- 다음 단계: Planner 응답을 메인 시뮬레이션 루프에 점진 연결
-- 에이전트 클릭 카드 Trace 섹션에 LLM latency/token 표시
+- Planner API route 1단계 완료 (`ENABLE_LIVE_LLM` gate + mock fallback + live Claude)
+- Planner 응답 steps → Task Queue 자동 생성 완료
+- Planner-generated task mini workflow 완료
+- 다음 단계: 에이전트 클릭 카드 Trace 섹션에 LLM latency/token 표시
 
 ### Phase 5 — LangGraph / CrewAI Orchestration
 - 5 에이전트 전체 LangGraph 워크플로우 실연결
@@ -324,7 +348,8 @@ src/
 │   │   └── WorkflowGraph.tsx # React Flow 워크플로우 그래프
 │   ├── RealtimeSyncClient.tsx    # null-render — useRealtimeSync 훅 마운트
 │   └── debug/
-│       └── ConnectionStatus.tsx  # 연결 상태 배지 (LIVE / PARTIAL ERR / ERROR)
+│       ├── ConnectionStatus.tsx  # 연결 상태 배지 (LIVE / PARTIAL ERR / ERROR)
+│       └── DebugPanel.tsx        # Planner provider/trace/token/latency 디버그 패널
 │
 ├── lib/
 │   ├── simulation/
@@ -355,7 +380,8 @@ src/
 │   └── useRealtimeSync.ts    # Realtime 구독 훅 (events/agents/tasks)
 │
 ├── store/
-│   └── simulationStore.ts    # Zustand 스토어
+│   ├── simulationStore.ts    # Zustand 스토어
+│   └── debugStore.ts         # Supabase / Planner debug 상태
 │
 └── types/
     └── index.ts              # 전체 타입 정의
@@ -375,5 +401,5 @@ src/
 | 실시간 DB | Supabase Realtime — events/agents/tasks 3-table 동기화 완료 |
 | 배포 | Vercel (프로덕션) |
 | LLM | Anthropic SDK (`@anthropic-ai/sdk`) — Planner route만 live 옵션, 기본 mock |
-| 미래 관측성 | AgentOps — Phase 3 예정 |
+| 관측성 | Supabase `agent_traces` — `llm_call`/`handoff`/`decision`, AgentOps SDK는 미연동 |
 | 미래 워크플로우 | LangGraph / CrewAI — Phase 5 예정 |

@@ -60,6 +60,22 @@ function withDevDebug(
   };
 }
 
+function withPlannerTelemetry(
+  response: PlannerAgentResponse,
+  llm: LlmResponse,
+  traceRecorded: boolean | undefined,
+  latencyMs: number | null,
+): PlannerAgentResponse {
+  return {
+    ...response,
+    traceRecorded: traceRecorded ?? response.traceRecorded ?? false,
+    model: llm.model ?? null,
+    latencyMs,
+    inputTokens: llm.inputTokens ?? null,
+    outputTokens: llm.outputTokens ?? null,
+  };
+}
+
 function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false): string[] {
   if (!Array.isArray(value)) return fallback;
   const cleaned = value
@@ -137,10 +153,10 @@ function buildPlannerSystemPrompt(basePrompt: string): string {
   ].join('\n');
 }
 
-function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean) {
+function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean, latencyMs: number | null = null) {
   const parsed = parsePlannerContent(llm);
   return Response.json(withDevDebug(
-    parsed.response,
+    withPlannerTelemetry(parsed.response, llm, traceRecorded, latencyMs),
     parsed.debugReason ?? llm.fallbackReason,
     traceRecorded,
   ));
@@ -190,6 +206,11 @@ async function buildMockResponse(taskTitle: string, taskDescription: string): Pr
   return safePlannerResponse({
     summary: mock.content,
     provider: 'mock',
+    traceRecorded: false,
+    model: mock.model,
+    latencyMs: mock.latencyMs,
+    inputTokens: mock.inputTokens,
+    outputTokens: mock.outputTokens,
   });
 }
 
@@ -257,5 +278,5 @@ export async function POST(request: Request) {
 
   const traceRecorded = await recordPlannerLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
 
-  return respondWithPlannerContent(llm, traceRecorded);
+  return respondWithPlannerContent(llm, traceRecorded, claudeLatencyMs);
 }

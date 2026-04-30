@@ -88,4 +88,8 @@ export interface PlannerAgentResponse {
   nextAgent: string;
   debugReason?: string;
   traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
 }

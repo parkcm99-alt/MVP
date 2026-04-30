@@ -8,6 +8,7 @@ import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
 import { getSessionId } from '@/lib/supabase/session';
 import { insertAgentTrace } from '@/lib/supabase/traces';
+import { useDebugStore } from '@/store/debugStore';
 import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -223,6 +224,7 @@ export default function ActionBar() {
   const isRunning = useSimStore(s => s.isRunning);
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
+  const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
 
@@ -256,6 +258,14 @@ export default function ActionBar() {
         body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
       });
       const result = await response.json() as PlannerAgentResponse;
+      recordPlannerResponse({
+        provider: result.provider,
+        traceRecorded: result.traceRecorded ?? false,
+        model: result.model ?? null,
+        latencyMs: result.latencyMs ?? null,
+        inputTokens: result.inputTokens ?? null,
+        outputTokens: result.outputTokens ?? null,
+      });
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Planner';
       const summary = result.summary || 'Planner 응답이 비어 있습니다.';
       const steps = Array.isArray(result.steps) ? result.steps : [];
@@ -311,6 +321,14 @@ export default function ActionBar() {
       }, 4500);
     } catch {
       const speech = 'Planner 호출 실패. Mock simulation은 계속 동작합니다.';
+      recordPlannerResponse({
+        provider: 'mock',
+        traceRecorded: false,
+        model: 'mock-fallback',
+        latencyMs: null,
+        inputTokens: null,
+        outputTokens: null,
+      });
       eventBus.emit('agent.planning', {
         agentId: 'planner',
         data: {

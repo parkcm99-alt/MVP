@@ -13,8 +13,9 @@
 import { useEffect, useState } from 'react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase/client';
 import { onPersistenceErrorChange } from '@/lib/supabase/errorTracker';
+import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 
-type ConnStatus = 'mock' | 'connecting' | 'ready' | 'partial' | 'error';
+type ConnStatus = SupabaseDebugStatus;
 
 const META: Record<ConnStatus, { label: string; color: string }> = {
   mock:       { label: 'MOCK MODE',            color: '#475569' },
@@ -25,11 +26,16 @@ const META: Record<ConnStatus, { label: string; color: string }> = {
 };
 
 export default function ConnectionStatus() {
+  const setSupabaseStatus = useDebugStore(s => s.setSupabaseStatus);
   const [status, setStatus] = useState<ConnStatus>(() => {
     if (!isSupabaseConfigured)    return 'mock';
     if (!getSupabaseClient())     return 'error';
     return 'connecting';
   });
+
+  useEffect(() => {
+    setSupabaseStatus(status);
+  }, [setSupabaseStatus, status]);
 
   // Channel subscription state
   useEffect(() => {
