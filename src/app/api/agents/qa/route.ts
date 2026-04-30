@@ -2,6 +2,7 @@ import { getAgentRolePrompt } from '@/lib/agents/prompts';
 import { claudeClient } from '@/lib/llm/claudeClient';
 import { parseLlmJsonObject } from '@/lib/llm/json';
 import { mockClaude } from '@/lib/llm/mockClaude';
+import { getModelForRole } from '@/lib/llm/modelSelector';
 import { insertAgentTrace } from '@/lib/supabase/traces';
 import type { LlmResponse, QaAgentResponse } from '@/lib/llm/types';
 
@@ -324,6 +325,7 @@ export async function POST(request: Request) {
   const claudeStartedAt = Date.now();
   const llm = await claudeClient.complete({
     agentRole: ROLE,
+    model: getModelForRole(ROLE),
     systemPrompt: buildQaSystemPrompt(qaPrompt.systemPrompt),
     messages: [
       {

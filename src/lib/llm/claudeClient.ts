@@ -40,9 +40,14 @@ function createTimeoutSignal(ms: number): { signal: AbortSignal; cleanup: () => 
   };
 }
 
-function getModelCandidates(): string[] {
-  const configured = process.env.CLAUDE_MODEL?.trim();
-  return [...new Set([configured, DEFAULT_CLAUDE_MODEL].filter(Boolean) as string[])];
+/**
+ * Build the model candidate list for a request.
+ * Priority: request.model → CLAUDE_MODEL env → DEFAULT_CLAUDE_MODEL.
+ * The stable default is always appended as a final fallback.
+ */
+function getModelCandidates(requestModel?: string): string[] {
+  const primary = requestModel?.trim() || process.env.CLAUDE_MODEL?.trim();
+  return [...new Set([primary, DEFAULT_CLAUDE_MODEL].filter(Boolean) as string[])];
 }
 
 function getErrorMessage(error: unknown): string {
@@ -127,7 +132,7 @@ export const claudeClient = {
     });
     let lastReason = 'claude_request_failed';
 
-    for (const model of getModelCandidates()) {
+    for (const model of getModelCandidates(request.model)) {
       const timeout = createTimeoutSignal(CLAUDE_TIMEOUT_MS);
 
       try {
@@ -152,7 +157,7 @@ export const claudeClient = {
           outputTokens:   typeof message.usage?.output_tokens === 'number' ? message.usage.output_tokens : null,
           latencyMs:      Date.now() - startedAt,
           model:          message.model,
-          fallbackReason: model === getClaudeModel() ? undefined : 'model_fallback',
+          fallbackReason: model === (request.model?.trim() || getClaudeModel()) ? undefined : 'model_fallback',
         };
       } catch (error) {
         lastReason = classifyClaudeError(error);

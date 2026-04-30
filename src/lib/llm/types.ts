@@ -41,6 +41,13 @@ export interface LlmRequest {
 
   /** Max tokens to generate. Defaults to 512 when omitted. */
   maxTokens?:   number;
+
+  /**
+   * Explicit model override for this request.
+   * When provided, claudeClient uses this model instead of CLAUDE_MODEL.
+   * Populated by each route via getModelForRole().
+   */
+  model?:       string;
 }
 
 // ── Response ──────────────────────────────────────────────────────────────────
