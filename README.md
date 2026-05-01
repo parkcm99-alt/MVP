@@ -201,11 +201,13 @@ useRealtimeSync (외부 세션 수신 시)
 ANTHROPIC_API_KEY=
 ENABLE_LIVE_LLM=false
 CLAUDE_MODEL=claude-sonnet-4-6
+CLAUDE_TIMEOUT_MS=15000
 SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 `ANTHROPIC_API_KEY`는 서버 전용입니다. `NEXT_PUBLIC_ANTHROPIC_API_KEY` 같은 브라우저 노출 변수는 만들지 않습니다.
 `CLAUDE_MODEL`을 비워두면 서버 코드가 `claude-sonnet-4-6`를 사용합니다. 설정한 모델이 `model_not_found`로 실패하면 이 안정적인 기본 모델로 한 번 재시도합니다.
+`CLAUDE_TIMEOUT_MS`는 서버 route의 Claude 요청 제한 시간입니다. 기본값은 15000ms이고, 운영 중 Sonnet 역할이 timeout으로 mock fallback되는 경우 Vercel Production env에서 조정할 수 있습니다.
 `SUPABASE_SERVICE_ROLE_KEY`도 서버 전용입니다. Production의 agent API route에서 `llm_call` trace를 안정적으로 저장할 때 우선 사용하며, 브라우저에는 절대 노출하지 않습니다.
 
 ### 역할별 모델 설정

@@ -17,10 +17,22 @@ import type { LlmRequest, LlmResponse } from './types';
 export const DEFAULT_CLAUDE_MODEL = 'claude-sonnet-4-6';
 const CLAUDE_DEFAULT_MAX_TOKENS = 320;
 const CLAUDE_HARD_MAX_TOKENS = 700;
-const CLAUDE_TIMEOUT_MS = 8_000;
+const DEFAULT_CLAUDE_TIMEOUT_MS = 15_000;
+const MIN_CLAUDE_TIMEOUT_MS = 5_000;
+const MAX_CLAUDE_TIMEOUT_MS = 25_000;
 
 export function getClaudeModel(): string {
   return process.env.CLAUDE_MODEL?.trim() || DEFAULT_CLAUDE_MODEL;
+}
+
+function getClaudeTimeoutMs(): number {
+  const configured = Number(process.env.CLAUDE_TIMEOUT_MS?.trim());
+  if (!Number.isFinite(configured)) return DEFAULT_CLAUDE_TIMEOUT_MS;
+
+  return Math.min(
+    Math.max(Math.floor(configured), MIN_CLAUDE_TIMEOUT_MS),
+    MAX_CLAUDE_TIMEOUT_MS,
+  );
 }
 
 function getTextContent(content: Message['content']): string {
@@ -125,15 +137,16 @@ export const claudeClient = {
     }
 
     const startedAt = Date.now();
+    const timeoutMs = getClaudeTimeoutMs();
     const client = new Anthropic({
       apiKey,
-      timeout: CLAUDE_TIMEOUT_MS,
+      timeout: timeoutMs,
       maxRetries: 0,
     });
     let lastReason = 'claude_request_failed';
 
     for (const model of getModelCandidates(request.model)) {
-      const timeout = createTimeoutSignal(CLAUDE_TIMEOUT_MS);
+      const timeout = createTimeoutSignal(timeoutMs);
 
       try {
         const message = await client.messages.create(
@@ -145,7 +158,7 @@ export const claudeClient = {
           },
           {
             signal: timeout.signal,
-            timeout: CLAUDE_TIMEOUT_MS,
+            timeout: timeoutMs,
             maxRetries: 0,
           },
         );
