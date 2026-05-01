@@ -3,13 +3,13 @@
  *
  * Resolution order (first non-empty value wins):
  *   1. CLAUDE_<ROLE>_MODEL  (role-specific override)
- *   2. CLAUDE_MODEL         (global default)
- *   3. DEFAULT_CLAUDE_MODEL (hardcoded stable fallback — never changes without a release)
+ *   2. Built-in role default (Reviewer / QA default to Haiku for cost control)
+ *   3. CLAUDE_MODEL         (global default)
+ *   4. DEFAULT_CLAUDE_MODEL (hardcoded stable fallback — never changes without a release)
  *
- * This lets operators assign lighter models (e.g. Haiku) to Reviewer / QA
- * without touching code:
- *   CLAUDE_REVIEWER_MODEL=claude-haiku-4-20250514
- *   CLAUDE_QA_MODEL=claude-haiku-4-20250514
+ * Operators can still override any role without touching code:
+ *   CLAUDE_REVIEWER_MODEL=claude-sonnet-4-6
+ *   CLAUDE_QA_MODEL=claude-sonnet-4-6
  *
  * IMPORTANT: This module is server-only. Do not import from Client Components.
  */
@@ -27,18 +27,24 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   qa:        'CLAUDE_QA_MODEL',
 };
 
+const ROLE_DEFAULT_MODELS: Partial<Record<AgentRole, string>> = {
+  reviewer: 'claude-haiku-4-5-20251001',
+  qa:       'claude-haiku-4-5-20251001',
+};
+
 /**
  * Returns the Claude model name to use for the given agent role.
  *
  * @example
- * // With CLAUDE_REVIEWER_MODEL=claude-haiku-4-20250514 set:
- * getModelForRole('reviewer') // → 'claude-haiku-4-20250514'
+ * // With no CLAUDE_REVIEWER_MODEL set:
+ * getModelForRole('reviewer') // → 'claude-haiku-4-5-20251001'
  * getModelForRole('planner')  // → process.env.CLAUDE_MODEL || DEFAULT_CLAUDE_MODEL
  */
 export function getModelForRole(role: AgentRole): string {
-  const roleEnvKey  = ROLE_ENV_KEYS[role];
-  const roleModel   = process.env[roleEnvKey]?.trim();
-  const globalModel = process.env.CLAUDE_MODEL?.trim();
+  const roleEnvKey       = ROLE_ENV_KEYS[role];
+  const roleModel        = process.env[roleEnvKey]?.trim();
+  const builtInRoleModel = ROLE_DEFAULT_MODELS[role];
+  const globalModel      = process.env.CLAUDE_MODEL?.trim();
 
-  return roleModel || globalModel || DEFAULT_CLAUDE_MODEL;
+  return roleModel || builtInRoleModel || globalModel || DEFAULT_CLAUDE_MODEL;
 }

@@ -215,7 +215,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 각 에이전트가 사용할 모델을 독립적으로 지정할 수 있습니다. 모델 선택 우선순위는 아래와 같습니다.
 
 ```
-CLAUDE_<ROLE>_MODEL  →  CLAUDE_MODEL  →  claude-sonnet-4-6 (하드코딩 기본값)
+CLAUDE_<ROLE>_MODEL  →  역할별 내장 기본값  →  CLAUDE_MODEL  →  claude-sonnet-4-6
 ```
 
 | 환경변수 | 적용 에이전트 | 기본값 (미설정 시) |
@@ -223,10 +223,10 @@ CLAUDE_<ROLE>_MODEL  →  CLAUDE_MODEL  →  claude-sonnet-4-6 (하드코딩 기
 | `CLAUDE_PLANNER_MODEL` | Planner | `CLAUDE_MODEL` 상속 |
 | `CLAUDE_ARCHITECT_MODEL` | Architect | `CLAUDE_MODEL` 상속 |
 | `CLAUDE_DEVELOPER_MODEL` | Developer | `CLAUDE_MODEL` 상속 |
-| `CLAUDE_REVIEWER_MODEL` | Reviewer | `CLAUDE_MODEL` 상속 |
-| `CLAUDE_QA_MODEL` | QA | `CLAUDE_MODEL` 상속 |
+| `CLAUDE_REVIEWER_MODEL` | Reviewer | `claude-haiku-4-5-20251001` |
+| `CLAUDE_QA_MODEL` | QA | `claude-haiku-4-5-20251001` |
 
-**비용 최적화 예시** — Reviewer / QA를 Haiku로 전환하려면 아래 두 줄만 추가하면 됩니다.
+**명시적 비용 최적화 예시** — Vercel Environment Variables에서도 아래처럼 명시할 수 있습니다.
 
 ```bash
 # .env.local 또는 Vercel Environment Variables
