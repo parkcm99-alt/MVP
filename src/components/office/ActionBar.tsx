@@ -425,6 +425,7 @@ export default function ActionBar() {
       setRetryFailedAgent(null);
       setLastFlowSummary(`재시도 완료 | ${label}: ${result.summary || '(no summary)'}`);
       sysLog(`[FLOW] ${label} 단계 재시도 성공: ${result.summary || '(no summary)'}`);
+      sysLog('[REPORT] 최종 보고서 생성 완료');
     }
 
     setRetryingAgent(agentId);
@@ -653,6 +654,7 @@ export default function ActionBar() {
       const fallbackSuffix = mockFallbackAgents.length > 0 ? ` | mock: ${mockFallbackAgents.join(', ')}` : '';
       setLastFlowSummary(`완료 | QA: ${qaFinalStatus} | Reviewer: ${reviewerApprovalStatus} | ${totalTokens} tokens${fallbackSuffix}`);
       sysLog(`[FLOW] 전체 실행 완료 — QA: ${qaFinalStatus} / Reviewer: ${reviewerApprovalStatus} / total tokens: ${totalTokens}`);
+      sysLog('[REPORT] 최종 보고서 생성 완료');
     } finally {
       (['planner', 'architect', 'developer', 'reviewer', 'qa'] as AgentRole[]).forEach(id => {
         const store = useSimStore.getState();

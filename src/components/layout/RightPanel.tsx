@@ -5,15 +5,17 @@ import TaskQueue from '@/components/panels/TaskQueue';
 import AgentStatus from '@/components/panels/AgentStatus';
 import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 import FullFlowSummary from '@/components/debug/FullFlowSummary';
+import FinalReportPanel from '@/components/debug/FinalReportPanel';
 import DebugPanel from '@/components/debug/DebugPanel';
 import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
 import { useDebugStore } from '@/store/debugStore';
 
-type Tab = 'tasks' | 'summary' | 'debug' | 'traces';
+type Tab = 'tasks' | 'summary' | 'report' | 'debug' | 'traces';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'tasks',   label: 'Tasks'   },
   { id: 'summary', label: 'Summary' },
+  { id: 'report',  label: 'Report'  },
   { id: 'debug',   label: 'Debug'   },
   { id: 'traces',  label: 'Traces'  },
 ];
@@ -71,6 +73,11 @@ export default function RightPanel() {
               <EmptyState message="⚡ Run Full Flow를 실행하면 결과가 표시됩니다." />
             )}
           </>
+        )}
+
+        {/* Report — Client-side final report generator */}
+        {activeTab === 'report' && (
+          <FinalReportPanel />
         )}
 
         {/* Debug — Supabase / LLM status */}

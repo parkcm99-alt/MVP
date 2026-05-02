@@ -27,6 +27,7 @@
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
 | **Run Full Agent Flow** | ✅ Production 검증 완료 — 5단계 순차 실행, agent_traces 5개 저장 확인 |
 | **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, 5 agent 요약, 토큰/레이턴시, 접기/펼치기 |
+| **Final Report Generator** | ✅ Full Flow 결과 state 기반 최종 업무 보고서 생성 + Markdown Copy |
 | **Work Request Input** | ✅ 업무 요청 직접 입력 → Full Flow 시작 입력으로 사용, 5초 cooldown, 실행 중 비활성화 |
 | **UI Layout Refresh** | ✅ Top Command / Main Simulation / Right Tabs / Bottom Event Log 4영역 정리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
@@ -82,13 +83,14 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - 개별 Agent 버튼은 호출 중 중복 클릭 차단 + 호출 후 **3초 cooldown**("Wait 3s")
   - 단계별 실패 시 Flow 중단 + failedAgent/failReason Summary 표시 + 해당 단계만 재시도 가능
   - mock fallback 사용 시 Event Log와 Summary `mockFallbackAgents`에 명확히 표시
+  - 완료 시 Report 탭에서 최종 업무 보고서 자동 생성, Event Log에 `[REPORT] 최종 보고서 생성 완료` 표시
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
 ### UI 레이아웃
 - **Top Command Area** — Work Request 입력과 주요 Action Buttons를 상단에 배치
 - **Main Simulation Area** — Pixel Office를 중앙 메인 영역으로 유지
-- **Right Control Panel** — `Tasks` / `Summary` / `Debug` / `Traces` 탭으로 Task Queue, Full Flow Summary, Debug Panel, Agent Trace Viewer를 분리
+- **Right Control Panel** — `Tasks` / `Summary` / `Report` / `Debug` / `Traces` 탭으로 Task Queue, Full Flow Summary, Final Report, Debug Panel, Agent Trace Viewer를 분리
 - **Bottom Event Log** — 화면 하단 전체 폭 접이식 로그 패널, 최신 200개 렌더링 제한 유지
 - 패널 제목, 카드 여백, 버튼 간격, 로그 타입 배지를 키워 가독성을 개선
 
@@ -110,6 +112,10 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - 완료 시각 KST `HH:mm:ss` 표시
   - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록, **Retry Failed Agent** 버튼 표시
   - mock fallback 발생 시 사용된 에이전트 목록 표시
+- **Report 탭** — Final Report Generator 표시. 추가 Claude 호출 없이 Full Flow state만 조합
+  - Original Request, Executive Summary, Agent별 요약, Final Recommendation, Next Actions 표시
+  - Reviewer `approvalStatus`와 QA `finalStatus`를 반영해 “진행 가능 / 추가 검증 후 진행 / 수정 후 재검토 / 수정 요청 반영 필요 / 추가 정보 필요” 권고 생성
+  - **Copy Report** 버튼으로 Markdown 보고서를 클립보드에 복사
 - **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
 - **Traces 탭** — Agent Trace Viewer에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
@@ -306,8 +312,24 @@ ActionBar 상단에 업무 요청 입력창이 있습니다.
 
 4. **완료 후**
    - Full Flow Summary Panel에서 5개 에이전트 결과를 확인합니다
+   - Report 탭에서 최종 업무 보고서를 확인하고 **Copy Report**로 Markdown을 복사할 수 있습니다
    - 5초 cooldown(버튼에 "⏳ Wait 5s" 표시) 후 다시 실행 가능합니다
    - 입력창을 수정해 다른 요청으로 재실행할 수 있습니다
+
+### Final Report Generator
+
+Run Full Flow가 `completed` 상태가 되면 추가 Claude API 호출 없이 클라이언트 state만으로 최종 보고서를 생성합니다.
+
+보고서 구성:
+
+- 제목과 Original Request
+- Executive Summary
+- Planner / Architect / Developer / Reviewer / QA 요약
+- Reviewer `approvalStatus`와 QA `finalStatus` 기반 Final Recommendation
+- Agent 요약에서 추출한 Next Actions, 없으면 기본 후속 작업 3개
+- 하단 운영 정보: `totalInputTokens`, `totalOutputTokens`, `totalTokens`, `totalLatencyMs`, 완료 시각
+
+`Copy Report`는 위 내용을 Markdown 형식으로 클립보드에 복사합니다. Supabase DB 구조는 변경하지 않습니다.
 
 ### 동작 상세
 
