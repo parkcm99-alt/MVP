@@ -625,12 +625,15 @@ export default function ActionBar() {
     <div className="action-bar">
       {/* ── Work Request row ─────────────────────────────────────────── */}
       <div className="work-request-row">
-        <span className="work-request-label">REQUEST</span>
+        <div className="work-request-copy">
+          <span className="work-request-label">WORK REQUEST</span>
+          <span className="work-request-hint">업무 목표를 자연어로 입력하면 Full Flow가 이 요청을 기준으로 실행됩니다.</span>
+        </div>
         <textarea
           className="work-request-textarea"
           value={workRequest}
           onChange={e => setWorkRequest(e.target.value)}
-          placeholder="예: 이디야 파일럿 운영 현황을 정리하고, 리스크와 다음 액션을 뽑아줘."
+          placeholder="예: 신규 기능 배포 전 리스크를 점검하고, API/DB 영향도와 QA 체크리스트를 정리해줘."
           rows={2}
           disabled={flowBusy}
           aria-label="업무 요청 입력"

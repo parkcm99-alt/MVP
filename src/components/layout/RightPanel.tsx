@@ -9,13 +9,13 @@ import DebugPanel from '@/components/debug/DebugPanel';
 import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
 import { useDebugStore } from '@/store/debugStore';
 
-type Tab = 'tasks' | 'flow' | 'debug' | 'traces';
+type Tab = 'tasks' | 'summary' | 'debug' | 'traces';
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'tasks',  label: 'TASKS'  },
-  { id: 'flow',   label: 'FLOW'   },
-  { id: 'debug',  label: 'DEBUG'  },
-  { id: 'traces', label: 'TRACES' },
+  { id: 'tasks',   label: 'Tasks'   },
+  { id: 'summary', label: 'Summary' },
+  { id: 'debug',   label: 'Debug'   },
+  { id: 'traces',  label: 'Traces'  },
 ];
 
 function EmptyState({ message }: { message: string }) {
@@ -63,8 +63,8 @@ export default function RightPanel() {
           </>
         )}
 
-        {/* Flow — Full Flow Summary */}
-        {activeTab === 'flow' && (
+        {/* Summary — Full Flow Summary */}
+        {activeTab === 'summary' && (
           <>
             <FullFlowSummary />
             {!fullFlowData && (

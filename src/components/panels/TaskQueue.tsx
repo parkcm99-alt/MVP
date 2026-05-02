@@ -548,14 +548,14 @@ export default function TaskQueue() {
         <span className="panel-badge">{tasks.length}</span>
       </div>
 
-      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {(['in_progress', 'review', 'backlog', 'done'] as TaskStatus[]).map(status => {
           const group = grouped[status];
           if (group.length === 0) return null;
           const style = STATUS_STYLES[status];
           return (
             <div key={status}>
-              <div style={{ fontSize: 9, color: '#475569', fontFamily: 'monospace', marginBottom: 3, letterSpacing: 1 }}>
+              <div style={{ fontSize: 10, color: '#64748B', fontFamily: 'monospace', marginBottom: 5, letterSpacing: 1 }}>
                 — {style.label} ({group.length}) —
               </div>
               {group.map(task => (
@@ -566,27 +566,27 @@ export default function TaskQueue() {
                     border: `1px solid ${style.text}33`,
                     borderLeft: `3px solid ${style.text}`,
                     borderRadius: 3,
-                    padding: '5px 8px',
-                    marginBottom: 3,
+                    padding: '8px 10px',
+                    marginBottom: 6,
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: 2,
+                    gap: 5,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
+                    <span style={{ fontSize: 11, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
                       {task.title}
                     </span>
-                    <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
+                    <span style={{ fontSize: 9, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
                       {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
                     </span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
+                    <span style={{ fontSize: 10, color: '#94A3B8', fontFamily: 'monospace', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
                       {formatDescription(task.description)}
                     </span>
                     {task.assignedTo && (
-                      <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
                         {ROLE_EMOJIS[task.assignedTo]} {task.assignedTo}
                       </span>
                     )}

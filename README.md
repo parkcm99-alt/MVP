@@ -28,6 +28,7 @@
 | **Run Full Agent Flow** | ✅ Production 검증 완료 — 5단계 순차 실행, agent_traces 5개 저장 확인 |
 | **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, 5 agent 요약, 토큰/레이턴시, 접기/펼치기 |
 | **Work Request Input** | ✅ 업무 요청 직접 입력 → Full Flow 시작 입력으로 사용, 3초 cooldown, 실행 중 비활성화 |
+| **UI Layout Refresh** | ✅ Top Command / Main Simulation / Right Tabs / Bottom Event Log 4영역 정리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
 | Debug Panel | ✅ Supabase/provider/trace/token/latency 상태 표시 |
@@ -82,24 +83,32 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
+### UI 레이아웃
+- **Top Command Area** — Work Request 입력과 주요 Action Buttons를 상단에 배치
+- **Main Simulation Area** — Pixel Office를 중앙 메인 영역으로 유지
+- **Right Control Panel** — `Tasks` / `Summary` / `Debug` / `Traces` 탭으로 Task Queue, Full Flow Summary, Debug Panel, Agent Trace Viewer를 분리
+- **Bottom Event Log** — 화면 하단 전체 폭 접이식 로그 패널, 최신 200개 렌더링 제한 유지
+- 패널 제목, 카드 여백, 버튼 간격, 로그 타입 배지를 키워 가독성을 개선
+
 ### 사이드 패널
+- **Tasks 탭** — Workflow Graph, Task Queue, Agent Status 표시
 - **Task Queue** — 태스크 상태(backlog/in-progress/review/done)·담당자 표시
 - Architect 담당 task에는 **Ask Architect** 버튼으로 Claude/mock 설계 검토 요청 가능
 - Developer 담당 task에는 **Ask Developer** 버튼으로 Claude/mock 구현 계획 요청 가능
 - Reviewer 담당 task에는 **Ask Reviewer** 버튼으로 Claude/mock 코드 리뷰 요청 가능
 - QA 담당 task에는 **Ask QA** 버튼으로 Claude/mock 테스트 계획 요청 가능
 - **Agent Status** — 에이전트별 현재 상태·현재 태스크·완료 수
-- **Event Log** — 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
+- **Event Log** — 하단 전체 폭 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
 - Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
 - **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
-- **Debug Panel** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
-- **Full Flow Summary Panel** — Debug Panel 내에 포함된 접이식 요약 패널. Run Full Flow 실행 후 표시됨
+- **Summary 탭** — Full Flow Summary Panel 표시. Run Full Flow 실행 후 표시됨
   - `running` (amber) · `completed` (green) · `failed` (red) 상태 배지
   - 5개 에이전트별 summary 텍스트, Reviewer `approvalStatus` badge, QA `finalStatus` badge
   - 총 latency · input tokens · output tokens 메트릭 그리드
   - 완료 시각 KST `HH:mm:ss` 표시
   - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록 표시
-- **Agent Trace Viewer** — Debug Panel 안에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
+- **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
+- **Traces 탭** — Agent Trace Viewer에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
 ### 타입드 이벤트 버스
 `src/lib/simulation/eventBus.ts`에 8종 이벤트 정의:

@@ -22,7 +22,7 @@ export default function AgentStatus() {
       <div className="panel-header">
         <span>📊 AGENT STATUS</span>
       </div>
-      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {Object.values(agents).map(agent => {
           const meta = STATUS_META[agent.status];
           return (
@@ -31,26 +31,26 @@ export default function AgentStatus() {
               style={{
                 display:      'flex',
                 alignItems:   'center',
-                gap:          8,
+                gap:          10,
                 background:   agent.status === 'blocked' ? '#2D050580' : '#1E293B',
                 border:       `1px solid ${agent.status === 'blocked' ? '#EF444466' : agent.primaryColor + '33'}`,
                 borderLeft:   `3px solid ${agent.status === 'blocked' ? '#EF4444' : agent.primaryColor}`,
                 borderRadius: 3,
-                padding:      '6px 8px',
+                padding:      '8px 10px',
               }}
             >
               {/* avatar */}
               <div
                 style={{
-                  width:          28,
-                  height:         28,
+                  width:          32,
+                  height:         32,
                   background:     agent.primaryColor + '22',
                   border:         `1px solid ${agent.primaryColor}`,
                   borderRadius:   2,
                   display:        'flex',
                   alignItems:     'center',
                   justifyContent: 'center',
-                  fontSize:       16,
+                  fontSize:       17,
                   flexShrink:     0,
                 }}
               >
@@ -60,16 +60,16 @@ export default function AgentStatus() {
               {/* info */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 10, color: agent.primaryColor, fontFamily: 'monospace', fontWeight: 'bold' }}>
+                  <span style={{ fontSize: 11, color: agent.primaryColor, fontFamily: 'monospace', fontWeight: 'bold' }}>
                     {agent.name.toUpperCase()}
                   </span>
-                  <span style={{ fontSize: 9, color: meta.color, fontFamily: 'monospace' }}>
+                  <span style={{ fontSize: 10, color: meta.color, fontFamily: 'monospace' }}>
                     {meta.icon} {meta.label}
                   </span>
                 </div>
                 <div
                   style={{
-                    fontSize:     9,
+                    fontSize:     10,
                     color:        '#475569',
                     fontFamily:   'monospace',
                     marginTop:    2,
@@ -86,7 +86,7 @@ export default function AgentStatus() {
               {agent.completedTasks > 0 && (
                 <div
                   style={{
-                    fontSize:     8,
+                    fontSize:     9,
                     fontFamily:   'monospace',
                     color:        '#34D399',
                     background:   '#14261E',
