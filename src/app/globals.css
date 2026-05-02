@@ -982,7 +982,7 @@ html, body {
 }
 .flow-summary-metrics {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 7px;
   margin-top: 4px;
 }
@@ -1017,7 +1017,7 @@ html, body {
   padding: 5px 6px;
   border: 1px dashed rgba(239,68,68,0.45);
   border-radius: 2px;
-  font-size: 7px;
+  font-size: 8px;
   color: #FCA5A5;
   display: flex;
   flex-direction: column;
@@ -1031,6 +1031,42 @@ html, body {
 .flow-summary-completed-agents {
   color: var(--text-muted);
   font-size: 7px;
+}
+.flow-summary-warning {
+  padding: 6px 7px;
+  border: 1px dashed rgba(251,191,36,0.42);
+  background: rgba(120,53,15,0.18);
+  border-radius: 2px;
+  color: #FCD34D;
+  font-size: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flow-summary-warning strong {
+  color: #FBBF24;
+}
+.flow-summary-retry {
+  margin-top: 4px;
+  align-self: flex-start;
+  border: 1px solid rgba(248,113,113,0.72);
+  background: rgba(127,29,29,0.32);
+  color: #FCA5A5;
+  font-family: 'Courier New', monospace;
+  font-size: 8px;
+  font-weight: bold;
+  letter-spacing: 0.6px;
+  padding: 5px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.flow-summary-retry:hover:not(:disabled) {
+  background: rgba(127,29,29,0.52);
+  color: #FECACA;
+}
+.flow-summary-retry:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 .flow-summary-request-row {
   display: grid;

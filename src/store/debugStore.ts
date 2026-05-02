@@ -21,6 +21,7 @@ export interface FullFlowSummaryData {
   failedAgent:             string | null;
   failReason:              string | null;
   completedAgents:         string[];
+  mockFallbackAgents:      string[];
   /** The user's original work request text, if provided. */
   originalRequest:         string | null;
 }
@@ -55,12 +56,16 @@ interface DebugStore {
   traceRefreshAt: number | null;
   lastFlowSummary: string | null;
   fullFlowData: FullFlowSummaryData | null;
+  retryFailedAgent: (() => void) | null;
+  retryingAgent: AgentRole | null;
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
   refreshTraces: () => void;
   setLastFlowSummary: (summary: string) => void;
   setFullFlowData: (data: FullFlowSummaryData) => void;
+  setRetryFailedAgent: (retryFailedAgent: (() => void) | null) => void;
+  setRetryingAgent: (retryingAgent: AgentRole | null) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -83,6 +88,8 @@ export const useDebugStore = create<DebugStore>((set) => ({
   traceRefreshAt: null,
   lastFlowSummary: null,
   fullFlowData: null,
+  retryFailedAgent: null,
+  retryingAgent: null,
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
@@ -128,4 +135,8 @@ export const useDebugStore = create<DebugStore>((set) => ({
   setLastFlowSummary: (summary) => set({ lastFlowSummary: summary }),
 
   setFullFlowData: (data) => set({ fullFlowData: data }),
+
+  setRetryFailedAgent: (retryFailedAgent) => set({ retryFailedAgent }),
+
+  setRetryingAgent: (retryingAgent) => set({ retryingAgent }),
 }));

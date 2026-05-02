@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
 import { useSimStore } from '@/store/simulationStore';
@@ -29,6 +29,10 @@ const PRIORITY_COLORS: Record<TaskPriority, string> = {
 const ROLE_EMOJIS: Record<string, string> = {
   planner: '📋', architect: '🏗️', developer: '💻', reviewer: '🔍', qa: '🧪',
 };
+
+const AGENT_BUTTON_COOLDOWN_MS = 3000;
+type TaskAiAgent = 'architect' | 'developer' | 'reviewer' | 'qa';
+type BrowserTimer = number;
 
 function formatDescription(description: string): string {
   const original = description.match(/original="([^"]+)"/)?.[1];
@@ -60,10 +64,30 @@ export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
+  const fullFlowRunning = useDebugStore(s => s.fullFlowData?.status === 'running');
   const [architectBusyTaskId, setArchitectBusyTaskId] = useState<string | null>(null);
   const [developerBusyTaskId, setDeveloperBusyTaskId] = useState<string | null>(null);
   const [reviewerBusyTaskId, setReviewerBusyTaskId] = useState<string | null>(null);
   const [qaBusyTaskId, setQaBusyTaskId] = useState<string | null>(null);
+  const [agentCooldowns, setAgentCooldowns] = useState<Record<TaskAiAgent, boolean>>({
+    architect: false,
+    developer: false,
+    reviewer: false,
+    qa: false,
+  });
+  const cooldownTimers = useRef<BrowserTimer[]>([]);
+
+  useEffect(() => () => {
+    cooldownTimers.current.forEach(window.clearTimeout);
+    cooldownTimers.current = [];
+  }, []);
+
+  function startAgentCooldown(agentId: TaskAiAgent) {
+    setAgentCooldowns(current => ({ ...current, [agentId]: true }));
+    cooldownTimers.current.push(window.setTimeout(() => {
+      setAgentCooldowns(current => ({ ...current, [agentId]: false }));
+    }, AGENT_BUTTON_COOLDOWN_MS));
+  }
 
   const grouped: Record<TaskStatus, typeof tasks> = {
     in_progress: tasks.filter(t => t.status === 'in_progress'),
@@ -73,7 +97,7 @@ export default function TaskQueue() {
   };
 
   async function askArchitect(task: SimTask) {
-    if (architectBusyTaskId) return;
+    if (fullFlowRunning || architectBusyTaskId || agentCooldowns.architect) return;
 
     const store = useSimStore.getState();
     const previousArchitect = store.agents.architect;
@@ -173,11 +197,12 @@ export default function TaskQueue() {
         useSimStore.getState().setTask('architect', previousTask);
       }
       setArchitectBusyTaskId(null);
+      startAgentCooldown('architect');
     }
   }
 
   async function askDeveloper(task: SimTask) {
-    if (developerBusyTaskId) return;
+    if (fullFlowRunning || developerBusyTaskId || agentCooldowns.developer) return;
 
     const store = useSimStore.getState();
     const previousDeveloper = store.agents.developer;
@@ -291,11 +316,12 @@ export default function TaskQueue() {
         useSimStore.getState().setTask('developer', previousTask);
       }
       setDeveloperBusyTaskId(null);
+      startAgentCooldown('developer');
     }
   }
 
   async function askReviewer(task: SimTask) {
-    if (reviewerBusyTaskId) return;
+    if (fullFlowRunning || reviewerBusyTaskId || agentCooldowns.reviewer) return;
 
     const store = useSimStore.getState();
     const previousReviewer = store.agents.reviewer;
@@ -409,11 +435,12 @@ export default function TaskQueue() {
         useSimStore.getState().setTask('reviewer', previousTask);
       }
       setReviewerBusyTaskId(null);
+      startAgentCooldown('reviewer');
     }
   }
 
   async function askQa(task: SimTask) {
-    if (qaBusyTaskId) return;
+    if (fullFlowRunning || qaBusyTaskId || agentCooldowns.qa) return;
 
     const store = useSimStore.getState();
     const previousQa = store.agents.qa;
@@ -538,6 +565,7 @@ export default function TaskQueue() {
         useSimStore.getState().setTask('qa', previousTask);
       }
       setQaBusyTaskId(null);
+      startAgentCooldown('qa');
     }
   }
 
@@ -597,10 +625,14 @@ export default function TaskQueue() {
                         className="task-card-ai-btn task-card-ai-btn--architect"
                         type="button"
                         onClick={() => { void askArchitect(task); }}
-                        disabled={architectBusyTaskId !== null}
+                        disabled={fullFlowRunning || architectBusyTaskId !== null || agentCooldowns.architect}
                         title="Architect Claude/mock으로 시스템 설계 검토"
                       >
-                        {architectBusyTaskId === task.id ? 'Reviewing...' : 'Ask Architect'}
+                        {fullFlowRunning
+                          ? 'Flow Running'
+                          : architectBusyTaskId
+                            ? architectBusyTaskId === task.id ? 'Reviewing...' : 'Busy...'
+                            : agentCooldowns.architect ? 'Wait 3s' : 'Ask Architect'}
                       </button>
                     </div>
                   )}
@@ -610,10 +642,14 @@ export default function TaskQueue() {
                         className="task-card-ai-btn task-card-ai-btn--developer"
                         type="button"
                         onClick={() => { void askDeveloper(task); }}
-                        disabled={developerBusyTaskId !== null}
+                        disabled={fullFlowRunning || developerBusyTaskId !== null || agentCooldowns.developer}
                         title="Developer Claude/mock으로 구현 계획 생성"
                       >
-                        {developerBusyTaskId === task.id ? 'Planning...' : 'Ask Developer'}
+                        {fullFlowRunning
+                          ? 'Flow Running'
+                          : developerBusyTaskId
+                            ? developerBusyTaskId === task.id ? 'Planning...' : 'Busy...'
+                            : agentCooldowns.developer ? 'Wait 3s' : 'Ask Developer'}
                       </button>
                     </div>
                   )}
@@ -623,10 +659,14 @@ export default function TaskQueue() {
                         className="task-card-ai-btn task-card-ai-btn--reviewer"
                         type="button"
                         onClick={() => { void askReviewer(task); }}
-                        disabled={reviewerBusyTaskId !== null}
+                        disabled={fullFlowRunning || reviewerBusyTaskId !== null || agentCooldowns.reviewer}
                         title="Reviewer Claude/mock으로 코드 리뷰 결과 생성"
                       >
-                        {reviewerBusyTaskId === task.id ? 'Reviewing...' : 'Ask Reviewer'}
+                        {fullFlowRunning
+                          ? 'Flow Running'
+                          : reviewerBusyTaskId
+                            ? reviewerBusyTaskId === task.id ? 'Reviewing...' : 'Busy...'
+                            : agentCooldowns.reviewer ? 'Wait 3s' : 'Ask Reviewer'}
                       </button>
                     </div>
                   )}
@@ -636,10 +676,14 @@ export default function TaskQueue() {
                         className="task-card-ai-btn task-card-ai-btn--qa"
                         type="button"
                         onClick={() => { void askQa(task); }}
-                        disabled={qaBusyTaskId !== null}
+                        disabled={fullFlowRunning || qaBusyTaskId !== null || agentCooldowns.qa}
                         title="QA Claude/mock으로 테스트 계획 생성"
                       >
-                        {qaBusyTaskId === task.id ? 'Testing...' : 'Ask QA'}
+                        {fullFlowRunning
+                          ? 'Flow Running'
+                          : qaBusyTaskId
+                            ? qaBusyTaskId === task.id ? 'Testing...' : 'Busy...'
+                            : agentCooldowns.qa ? 'Wait 3s' : 'Ask QA'}
                       </button>
                     </div>
                   )}

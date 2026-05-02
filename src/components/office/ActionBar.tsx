@@ -55,6 +55,8 @@ const STATUS_SCORE: Record<TaskStatus, number> = {
 };
 
 const PLANNER_GENERATED_MARKER = '[planner-generated]';
+const FULL_FLOW_COOLDOWN_MS = 5000;
+const AGENT_BUTTON_COOLDOWN_MS = 3000;
 type BrowserTimer = number;
 
 const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
@@ -63,6 +65,14 @@ const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
   developer: 'coding',
   reviewer: 'reviewing',
   qa: 'testing',
+};
+
+const AGENT_LABELS: Record<AgentRole, string> = {
+  planner: 'Planner',
+  architect: 'Architect',
+  developer: 'Developer',
+  reviewer: 'Reviewer',
+  qa: 'QA',
 };
 
 function pickHighestPriorityTask(tasks: SimTask[]): SimTask | undefined {
@@ -239,9 +249,41 @@ interface FlowDebugUpdate {
   outputTokens?: number | null;
 }
 
+type FlowAgentResponse =
+  | PlannerAgentResponse
+  | ArchitectAgentResponse
+  | DeveloperAgentResponse
+  | ReviewerAgentResponse
+  | QaAgentResponse;
+
 function buildContext(summary: string, lines: string[]): string {
   const body = lines.slice(0, 5).join(' | ');
   return `이전 단계 요약: ${summary}${body ? ` | 세부: ${body}` : ''}`.slice(0, 700);
+}
+
+function getFailureReason(error: unknown): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return '알 수 없는 오류';
+}
+
+function addUnique(items: string[], value: string): string[] {
+  return items.includes(value) ? items : [...items, value];
+}
+
+async function readFlowResponse<T extends FlowAgentResponse>(
+  response: Response,
+  agentId: AgentRole,
+): Promise<T> {
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const result = await response.json() as T;
+  if (!result.ok) {
+    throw new Error(result.debugReason ?? `${AGENT_LABELS[agentId]} API returned ok:false`);
+  }
+
+  return result;
 }
 
 export default function ActionBar() {
@@ -250,18 +292,178 @@ export default function ActionBar() {
   const [plannerBusy, setPlannerBusy] = useState(false);
   const [flowBusy, setFlowBusy] = useState(false);
   const [cooldownActive, setCooldownActive] = useState(false);
+  const [plannerCooldown, setPlannerCooldown] = useState(false);
   const [workRequest, setWorkRequest] = useState('');
   const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const setLastFlowSummary = useDebugStore(s => s.setLastFlowSummary);
   const setFullFlowData = useDebugStore(s => s.setFullFlowData);
+  const setRetryFailedAgent = useDebugStore(s => s.setRetryFailedAgent);
+  const setRetryingAgent = useDebugStore(s => s.setRetryingAgent);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
+  const cooldownTimers = useRef<BrowserTimer[]>([]);
 
   useEffect(() => () => {
     plannerWorkflowTimers.current.forEach(window.clearTimeout);
     plannerWorkflowTimers.current = [];
+    cooldownTimers.current.forEach(window.clearTimeout);
+    cooldownTimers.current = [];
   }, []);
+
+  function startCooldown(setter: (active: boolean) => void, ms: number) {
+    setter(true);
+    cooldownTimers.current.push(window.setTimeout(() => setter(false), ms));
+  }
+
+  function sysLog(msg: string) {
+    useSimStore.getState().addEvent({
+      agentId: 'planner',
+      agentName: 'System',
+      agentColor: '#D97706',
+      type: 'system',
+      message: msg,
+    });
+  }
+
+  function recordStep(u: FlowDebugUpdate) {
+    recordAgentResponse({
+      agentId:       u.agentId,
+      provider:      u.provider,
+      traceRecorded: u.traceRecorded ?? null,
+      model:         u.model ?? null,
+      latencyMs:     u.latencyMs ?? null,
+      inputTokens:   u.inputTokens ?? null,
+      outputTokens:  u.outputTokens ?? null,
+    });
+  }
+
+  async function callFlowAgent<T extends FlowAgentResponse>(
+    agentId: AgentRole,
+    endpoint: string,
+    taskTitle: string,
+    taskDescription: string,
+    sessionId: string,
+  ): Promise<T> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
+    });
+
+    return readFlowResponse<T>(response, agentId);
+  }
+
+  async function retryFailedFlowAgent(agentId: AgentRole) {
+    const currentData = useDebugStore.getState().fullFlowData;
+    if (!currentData?.failedAgent || useDebugStore.getState().retryingAgent) return;
+
+    const flowData = currentData;
+    const label = AGENT_LABELS[agentId];
+    const task = pickHighestPriorityTask(useSimStore.getState().tasks);
+    const baseTitle = flowData.originalRequest ? 'User Work Request' : (task?.title ?? 'Retry Failed Agent');
+    const baseDesc = flowData.originalRequest ?? task?.description ?? '실패한 Agent 단계를 재시도합니다.';
+    const sessionId = getSessionId();
+    const previousAgent = useSimStore.getState().agents[agentId];
+    const previousStatus: AgentStatus = previousAgent.status;
+    const previousTask = previousAgent.currentTask;
+    const retryTask = `Retry: ${label}`;
+    const mockFallbackAgents = [...flowData.mockFallbackAgents];
+
+    function retryDescription() {
+      if (agentId === 'planner') return baseDesc;
+      if (agentId === 'architect') return buildContext(flowData.plannerSummary ?? baseDesc, []);
+      if (agentId === 'developer') return buildContext(flowData.architectSummary ?? flowData.plannerSummary ?? baseDesc, []);
+      if (agentId === 'reviewer') return buildContext(flowData.developerSummary ?? flowData.architectSummary ?? baseDesc, []);
+      return buildContext(flowData.reviewerSummary ?? flowData.developerSummary ?? baseDesc, []);
+    }
+
+    function applyRetryResult(result: FlowAgentResponse) {
+      recordStep({
+        agentId,
+        provider: result.provider,
+        traceRecorded: result.traceRecorded,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      });
+
+      if (result.provider === 'mock') {
+        sysLog(`[FLOW] ${label} used mock fallback`);
+        mockFallbackAgents.splice(0, mockFallbackAgents.length, ...addUnique(mockFallbackAgents, label));
+      }
+
+      const nextData = {
+        ...flowData,
+        status: 'completed' as const,
+        totalLatencyMs: flowData.totalLatencyMs + (result.latencyMs ?? 0),
+        totalInputTokens: flowData.totalInputTokens + (result.inputTokens ?? 0),
+        totalOutputTokens: flowData.totalOutputTokens + (result.outputTokens ?? 0),
+        completedAt: Date.now(),
+        failedAgent: null,
+        failReason: null,
+        completedAgents: addUnique(flowData.completedAgents, label),
+        mockFallbackAgents,
+      };
+
+      if (agentId === 'planner') nextData.plannerSummary = result.summary || '(no summary)';
+      if (agentId === 'architect') nextData.architectSummary = result.summary || '(no summary)';
+      if (agentId === 'developer') nextData.developerSummary = result.summary || '(no summary)';
+      if (agentId === 'reviewer') {
+        const reviewerResult = result as ReviewerAgentResponse;
+        nextData.reviewerSummary = reviewerResult.summary || '(no summary)';
+        nextData.reviewerApprovalStatus = reviewerResult.approvalStatus ?? null;
+      }
+      if (agentId === 'qa') {
+        const qaResult = result as QaAgentResponse;
+        nextData.qaSummary = qaResult.summary || '(no summary)';
+        nextData.qaFinalStatus = qaResult.finalStatus ?? null;
+      }
+
+      setFullFlowData(nextData);
+      setRetryFailedAgent(null);
+      setLastFlowSummary(`재시도 완료 | ${label}: ${result.summary || '(no summary)'}`);
+      sysLog(`[FLOW] ${label} 단계 재시도 성공: ${result.summary || '(no summary)'}`);
+    }
+
+    setRetryingAgent(agentId);
+    useSimStore.getState().setStatus(agentId, PLANNER_WORK_STATUS[agentId]);
+    useSimStore.getState().setTask(agentId, retryTask);
+    useSimStore.getState().setSpeech(agentId, `${label} 재시도 중...`);
+    sysLog(`[FLOW] ${label} 단계 재시도 시작`);
+
+    try {
+      const description = retryDescription();
+      let result: FlowAgentResponse;
+      if (agentId === 'planner') result = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, description, sessionId);
+      else if (agentId === 'architect') result = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, description, sessionId);
+      else if (agentId === 'developer') result = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, description, sessionId);
+      else if (agentId === 'reviewer') result = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, description, sessionId);
+      else result = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, description, sessionId);
+
+      applyRetryResult(result);
+      useSimStore.getState().setSpeech(agentId, result.summary.slice(0, 72));
+    } catch (error) {
+      const reason = getFailureReason(error);
+      sysLog(`[FLOW] ${label} 단계 재시도 실패: ${reason}`);
+      setFullFlowData({
+        ...flowData,
+        completedAt: flowData.completedAt,
+        failedAgent: label,
+        failReason: reason,
+      });
+      setRetryFailedAgent(() => { void retryFailedFlowAgent(agentId); });
+      useSimStore.getState().setSpeech(agentId, `재시도 실패: ${reason}`.slice(0, 72));
+    } finally {
+      const store = useSimStore.getState();
+      if (store.agents[agentId].currentTask === retryTask) {
+        store.setStatus(agentId, previousStatus);
+        store.setTask(agentId, previousTask);
+      }
+      setRetryingAgent(null);
+    }
+  }
 
   async function runFullFlow() {
     if (plannerBusy || flowBusy || cooldownActive) return;
@@ -273,8 +475,8 @@ export default function ActionBar() {
     const baseDesc  = hasRequest ? trimmedRequest : (task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.');
     const sessionId = getSessionId();
 
-    // ── Accumulators (declared before try so inner catches can read them) ──
     const completedAgents: string[] = [];
+    const mockFallbackAgents: string[] = [];
     let plannerSummary:         string | null = null;
     let architectSummary:       string | null = null;
     let developerSummary:       string | null = null;
@@ -286,23 +488,10 @@ export default function ActionBar() {
     let totalOutputTokens = 0;
     let totalLatencyMs    = 0;
 
-    function sysLog(msg: string) {
-      useSimStore.getState().addEvent({ agentId: 'planner', agentName: 'System', agentColor: '#D97706', type: 'system', message: msg });
-    }
-
-    function recordStep(u: FlowDebugUpdate) {
-      recordAgentResponse({
-        agentId:       u.agentId,
-        provider:      u.provider,
-        traceRecorded: u.traceRecorded ?? null,
-        model:         u.model ?? null,
-        latencyMs:     u.latencyMs ?? null,
-        inputTokens:   u.inputTokens ?? null,
-        outputTokens:  u.outputTokens ?? null,
-      });
-    }
-
-    function snapshotFail(agentName: string, reason: string) {
+    function snapshotFail(agentId: AgentRole, reason: string) {
+      const label = AGENT_LABELS[agentId];
+      sysLog(`[FLOW] ${label} 단계 실패: ${reason}`);
+      setRetryFailedAgent(() => { void retryFailedFlowAgent(agentId); });
       setFullFlowData({
         status: 'failed',
         plannerSummary, architectSummary, developerSummary,
@@ -310,21 +499,47 @@ export default function ActionBar() {
         qaSummary, qaFinalStatus,
         totalLatencyMs, totalInputTokens, totalOutputTokens,
         completedAt: Date.now(),
-        failedAgent: agentName,
-        failReason:  reason,
+        failedAgent: label,
+        failReason: reason,
         completedAgents: [...completedAgents],
+        mockFallbackAgents: [...mockFallbackAgents],
         originalRequest: hasRequest ? trimmedRequest : null,
       });
     }
 
+    function trackResult(agentId: AgentRole, result: FlowAgentResponse) {
+      recordStep({
+        agentId,
+        provider: result.provider,
+        traceRecorded: result.traceRecorded,
+        model: result.model,
+        latencyMs: result.latencyMs,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      });
+      totalInputTokens  += result.inputTokens  ?? 0;
+      totalOutputTokens += result.outputTokens ?? 0;
+      totalLatencyMs    += result.latencyMs    ?? 0;
+
+      if (result.provider === 'mock') {
+        const label = AGENT_LABELS[agentId];
+        mockFallbackAgents.splice(0, mockFallbackAgents.length, ...addUnique(mockFallbackAgents, label));
+        sysLog(`[FLOW] ${label} used mock fallback`);
+      }
+    }
+
     setFlowBusy(true);
+    setRetryFailedAgent(null);
+    setRetryingAgent(null);
     setFullFlowData({
       status: 'running',
-      plannerSummary: null, architectSummary: null, developerSummary: null,
+      plannerSummary: null, architectSummary: null,
       reviewerSummary: null, reviewerApprovalStatus: null,
+      developerSummary: null,
       qaSummary: null, qaFinalStatus: null,
       totalLatencyMs: 0, totalInputTokens: 0, totalOutputTokens: 0,
       completedAt: null, failedAgent: null, failReason: null, completedAgents: [],
+      mockFallbackAgents: [],
       originalRequest: hasRequest ? trimmedRequest : null,
     });
     if (hasRequest) {
@@ -335,28 +550,18 @@ export default function ActionBar() {
     }
 
     try {
-      // ── Step 1: Planner ──────────────────────────────────────────────────
       useSimStore.getState().setStatus('planner', 'thinking');
       useSimStore.getState().setSpeech('planner', 'Full Flow 계획 중...');
       let plannerResult: PlannerAgentResponse;
       try {
-        const res = await fetch('/api/agents/planner', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskTitle: baseTitle, taskDescription: baseDesc, sessionId, session_id: sessionId }),
-        });
-        plannerResult = await res.json() as PlannerAgentResponse;
-      } catch {
-        sysLog('[FLOW] [Planner] 호출 실패 — Flow 중단');
-        snapshotFail('Planner', '네트워크 오류');
+        plannerResult = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, baseDesc, sessionId);
+      } catch (error) {
+        snapshotFail('planner', getFailureReason(error));
         return;
       }
-      recordStep({ agentId: 'planner', provider: plannerResult.provider, traceRecorded: plannerResult.traceRecorded, model: plannerResult.model, latencyMs: plannerResult.latencyMs, inputTokens: plannerResult.inputTokens, outputTokens: plannerResult.outputTokens });
-      totalInputTokens  += plannerResult.inputTokens  ?? 0;
-      totalOutputTokens += plannerResult.outputTokens ?? 0;
-      totalLatencyMs    += plannerResult.latencyMs    ?? 0;
+      trackResult('planner', plannerResult);
       plannerSummary = plannerResult.summary || '(no summary)';
-      completedAgents.push('planner');
+      completedAgents.push(AGENT_LABELS.planner);
       sysLog(`[Planner] 계획 완료: ${plannerSummary}`);
       useSimStore.getState().setSpeech('planner', plannerSummary.slice(0, 72));
       eventBus.emit('agent.planning', {
@@ -364,113 +569,72 @@ export default function ActionBar() {
         data: { summary: plannerSummary, steps: plannerResult.steps ?? [], taskTitle: baseTitle, taskPriority: task?.priority ?? 'medium', provider: plannerResult.provider, risks: plannerResult.risks, nextAgent: plannerResult.nextAgent },
       });
 
-      // ── Step 2: Architect ────────────────────────────────────────────────
       useSimStore.getState().setStatus('architect', 'thinking');
       useSimStore.getState().setSpeech('architect', '설계 검토 중...');
       let architectResult: ArchitectAgentResponse;
       try {
-        const res = await fetch('/api/agents/architect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskTitle: baseTitle, taskDescription: buildContext(plannerSummary, plannerResult.steps ?? []), sessionId, session_id: sessionId }),
-        });
-        architectResult = await res.json() as ArchitectAgentResponse;
-      } catch {
-        sysLog('[FLOW] [Architect] 호출 실패 — Flow 중단');
-        snapshotFail('Architect', '네트워크 오류');
+        architectResult = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, buildContext(plannerSummary, plannerResult.steps ?? []), sessionId);
+      } catch (error) {
+        snapshotFail('architect', getFailureReason(error));
         return;
       }
-      recordStep({ agentId: 'architect', provider: architectResult.provider, traceRecorded: architectResult.traceRecorded, model: architectResult.model, latencyMs: architectResult.latencyMs, inputTokens: architectResult.inputTokens, outputTokens: architectResult.outputTokens });
-      totalInputTokens  += architectResult.inputTokens  ?? 0;
-      totalOutputTokens += architectResult.outputTokens ?? 0;
-      totalLatencyMs    += architectResult.latencyMs    ?? 0;
+      trackResult('architect', architectResult);
       architectSummary = architectResult.summary || '(no summary)';
-      completedAgents.push('architect');
+      completedAgents.push(AGENT_LABELS.architect);
       sysLog(`[Architect] 설계 검토 완료: ${architectSummary}`);
       useSimStore.getState().setSpeech('architect', architectSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'architect', data: { message: architectSummary, taskTitle: baseTitle, provider: architectResult.provider } });
 
-      // ── Step 3: Developer ────────────────────────────────────────────────
       useSimStore.getState().setStatus('developer', 'coding');
       useSimStore.getState().setSpeech('developer', '구현 계획 작성 중...');
       let developerResult: DeveloperAgentResponse;
       try {
-        const res = await fetch('/api/agents/developer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskTitle: baseTitle, taskDescription: buildContext(architectSummary, architectResult.architectureNotes ?? []), sessionId, session_id: sessionId }),
-        });
-        developerResult = await res.json() as DeveloperAgentResponse;
-      } catch {
-        sysLog('[FLOW] [Developer] 호출 실패 — Flow 중단');
-        snapshotFail('Developer', '네트워크 오류');
+        developerResult = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, buildContext(architectSummary, architectResult.architectureNotes ?? []), sessionId);
+      } catch (error) {
+        snapshotFail('developer', getFailureReason(error));
         return;
       }
-      recordStep({ agentId: 'developer', provider: developerResult.provider, traceRecorded: developerResult.traceRecorded, model: developerResult.model, latencyMs: developerResult.latencyMs, inputTokens: developerResult.inputTokens, outputTokens: developerResult.outputTokens });
-      totalInputTokens  += developerResult.inputTokens  ?? 0;
-      totalOutputTokens += developerResult.outputTokens ?? 0;
-      totalLatencyMs    += developerResult.latencyMs    ?? 0;
+      trackResult('developer', developerResult);
       developerSummary = developerResult.summary || '(no summary)';
-      completedAgents.push('developer');
+      completedAgents.push(AGENT_LABELS.developer);
       sysLog(`[Developer] 구현 계획 완료: ${developerSummary}`);
       useSimStore.getState().setSpeech('developer', developerSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'developer', data: { message: developerSummary, taskTitle: baseTitle, provider: developerResult.provider } });
 
-      // ── Step 4: Reviewer ─────────────────────────────────────────────────
       useSimStore.getState().setStatus('reviewer', 'reviewing');
       useSimStore.getState().setSpeech('reviewer', '코드 리뷰 중...');
       let reviewerResult: ReviewerAgentResponse;
       try {
-        const res = await fetch('/api/agents/reviewer', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskTitle: baseTitle, taskDescription: buildContext(developerSummary, developerResult.implementationPlan ?? []), sessionId, session_id: sessionId }),
-        });
-        reviewerResult = await res.json() as ReviewerAgentResponse;
-      } catch {
-        sysLog('[FLOW] [Reviewer] 호출 실패 — Flow 중단');
-        snapshotFail('Reviewer', '네트워크 오류');
+        reviewerResult = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, buildContext(developerSummary, developerResult.implementationPlan ?? []), sessionId);
+      } catch (error) {
+        snapshotFail('reviewer', getFailureReason(error));
         return;
       }
-      recordStep({ agentId: 'reviewer', provider: reviewerResult.provider, traceRecorded: reviewerResult.traceRecorded, model: reviewerResult.model, latencyMs: reviewerResult.latencyMs, inputTokens: reviewerResult.inputTokens, outputTokens: reviewerResult.outputTokens });
-      totalInputTokens  += reviewerResult.inputTokens  ?? 0;
-      totalOutputTokens += reviewerResult.outputTokens ?? 0;
-      totalLatencyMs    += reviewerResult.latencyMs    ?? 0;
-      reviewerSummary       = reviewerResult.summary || '(no summary)';
+      trackResult('reviewer', reviewerResult);
+      reviewerSummary = reviewerResult.summary || '(no summary)';
       reviewerApprovalStatus = reviewerResult.approvalStatus ?? null;
-      completedAgents.push('reviewer');
+      completedAgents.push(AGENT_LABELS.reviewer);
       sysLog(`[Reviewer] 리뷰 완료 (${reviewerApprovalStatus}): ${reviewerSummary}`);
       useSimStore.getState().setSpeech('reviewer', reviewerSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'reviewer', data: { message: reviewerSummary, taskTitle: baseTitle, provider: reviewerResult.provider } });
 
-      // ── Step 5: QA ───────────────────────────────────────────────────────
       useSimStore.getState().setStatus('qa', 'testing');
       useSimStore.getState().setSpeech('qa', 'QA 검증 중...');
       let qaResult: QaAgentResponse;
       try {
-        const res = await fetch('/api/agents/qa', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ taskTitle: baseTitle, taskDescription: buildContext(reviewerSummary, reviewerResult.reviewFindings ?? []), sessionId, session_id: sessionId }),
-        });
-        qaResult = await res.json() as QaAgentResponse;
-      } catch {
-        sysLog('[FLOW] [QA] 호출 실패 — Flow 중단');
-        snapshotFail('QA', '네트워크 오류');
+        qaResult = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, buildContext(reviewerSummary, reviewerResult.reviewFindings ?? []), sessionId);
+      } catch (error) {
+        snapshotFail('qa', getFailureReason(error));
         return;
       }
-      recordStep({ agentId: 'qa', provider: qaResult.provider, traceRecorded: qaResult.traceRecorded, model: qaResult.model, latencyMs: qaResult.latencyMs, inputTokens: qaResult.inputTokens, outputTokens: qaResult.outputTokens });
-      totalInputTokens  += qaResult.inputTokens  ?? 0;
-      totalOutputTokens += qaResult.outputTokens ?? 0;
-      totalLatencyMs    += qaResult.latencyMs    ?? 0;
-      qaSummary    = qaResult.summary || '(no summary)';
+      trackResult('qa', qaResult);
+      qaSummary = qaResult.summary || '(no summary)';
       qaFinalStatus = qaResult.finalStatus ?? null;
-      completedAgents.push('qa');
+      completedAgents.push(AGENT_LABELS.qa);
       sysLog(`[QA] 검증 완료 (${qaFinalStatus}): ${qaSummary}`);
       useSimStore.getState().setSpeech('qa', qaSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'qa', data: { message: qaSummary, taskTitle: baseTitle, provider: qaResult.provider } });
 
-      // ── Flow complete ────────────────────────────────────────────────────
       const completedAt = Date.now();
       setFullFlowData({
         status: 'completed',
@@ -481,13 +645,15 @@ export default function ActionBar() {
         completedAt,
         failedAgent: null, failReason: null,
         completedAgents: [...completedAgents],
+        mockFallbackAgents: [...mockFallbackAgents],
         originalRequest: hasRequest ? trimmedRequest : null,
       });
+      setRetryFailedAgent(null);
       const totalTokens = totalInputTokens + totalOutputTokens;
-      setLastFlowSummary(`완료 | QA: ${qaFinalStatus} | Reviewer: ${reviewerApprovalStatus} | ${totalTokens} tokens`);
+      const fallbackSuffix = mockFallbackAgents.length > 0 ? ` | mock: ${mockFallbackAgents.join(', ')}` : '';
+      setLastFlowSummary(`완료 | QA: ${qaFinalStatus} | Reviewer: ${reviewerApprovalStatus} | ${totalTokens} tokens${fallbackSuffix}`);
       sysLog(`[FLOW] 전체 실행 완료 — QA: ${qaFinalStatus} / Reviewer: ${reviewerApprovalStatus} / total tokens: ${totalTokens}`);
     } finally {
-      // Restore agent states
       (['planner', 'architect', 'developer', 'reviewer', 'qa'] as AgentRole[]).forEach(id => {
         const store = useSimStore.getState();
         if (store.agents[id].status !== 'idle') {
@@ -496,14 +662,12 @@ export default function ActionBar() {
         }
       });
       setFlowBusy(false);
-      // 3-second cooldown to prevent rapid re-execution
-      setCooldownActive(true);
-      window.setTimeout(() => setCooldownActive(false), 3000);
+      startCooldown(setCooldownActive, FULL_FLOW_COOLDOWN_MS);
     }
   }
 
   async function askPlanner() {
-    if (plannerBusy || flowBusy) return;
+    if (plannerBusy || flowBusy || plannerCooldown) return;
 
     const task = pickHighestPriorityTask(tasks);
     const taskTitle = task?.title ?? '스프린트 계획 점검';
@@ -615,11 +779,13 @@ export default function ActionBar() {
         useSimStore.getState().setTask('planner', previousTask);
       }
       setPlannerBusy(false);
+      startCooldown(setPlannerCooldown, AGENT_BUTTON_COOLDOWN_MS);
     }
   }
 
   const flowBlocked = flowBusy || cooldownActive;
-  const anyBusy     = flowBlocked || plannerBusy;
+  const plannerBlocked = plannerBusy || flowBlocked || plannerCooldown;
+  const anyBusy     = flowBlocked || plannerBusy || plannerCooldown;
 
   return (
     <div className="action-bar">
@@ -669,9 +835,9 @@ export default function ActionBar() {
           variant="planner"
           onClick={() => { void askPlanner(); }}
           title="가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획"
-          disabled={anyBusy}
+          disabled={plannerBlocked}
         >
-          {plannerBusy ? 'Planning...' : 'Plan with Claude'}
+          {plannerBusy ? 'Planning...' : plannerCooldown ? 'Wait 3s' : 'Plan with Claude'}
         </ActionBtn>
         <ActionBtn
           variant="flow"
@@ -682,7 +848,7 @@ export default function ActionBar() {
           {flowBusy
             ? 'Running Flow...'
             : cooldownActive
-              ? '⏳ Wait...'
+              ? '⏳ Wait 5s'
               : workRequest.trim()
                 ? '⚡ Run Flow from Request'
                 : '⚡ Run Full Flow'}

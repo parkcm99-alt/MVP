@@ -53,6 +53,8 @@ function AgentRow({ label, summary, badge }: AgentRowProps) {
 export default function FullFlowSummary() {
   const [collapsed, setCollapsed] = useState(false);
   const data = useDebugStore(s => s.fullFlowData);
+  const retryFailedAgent = useDebugStore(s => s.retryFailedAgent);
+  const retryingAgent = useDebugStore(s => s.retryingAgent);
 
   if (!data) return null;
 
@@ -139,16 +141,20 @@ export default function FullFlowSummary() {
           {/* Metrics */}
           <div className="flow-summary-metrics">
             <div>
-              <span>total_ms</span>
+              <span>totalLatencyMs</span>
               <strong>{data.totalLatencyMs > 0 ? `${data.totalLatencyMs}ms` : '—'}</strong>
             </div>
             <div>
-              <span>input_tok</span>
+              <span>totalInputTokens</span>
               <strong>{data.totalInputTokens > 0 ? data.totalInputTokens : '—'}</strong>
             </div>
             <div>
-              <span>output_tok</span>
+              <span>totalOutputTokens</span>
               <strong>{data.totalOutputTokens > 0 ? data.totalOutputTokens : '—'}</strong>
+            </div>
+            <div>
+              <span>totalTokens</span>
+              <strong>{totalTokens > 0 ? totalTokens : '—'}</strong>
             </div>
           </div>
 
@@ -159,6 +165,14 @@ export default function FullFlowSummary() {
               <span>completed at {formatKstTime(data.completedAt)} KST</span>
             )}
           </div>
+
+          {/* Mock fallback warning */}
+          {data.mockFallbackAgents.length > 0 && (
+            <div className="flow-summary-warning">
+              <strong>Mock fallback used</strong>
+              <span>{data.mockFallbackAgents.join(' / ')}</span>
+            </div>
+          )}
 
           {/* Failure block */}
           {status === 'failed' && data.failedAgent && (
@@ -171,6 +185,16 @@ export default function FullFlowSummary() {
               )}
               {data.completedAt && (
                 <span>발생 시각: {formatKstTime(data.completedAt)} KST</span>
+              )}
+              {retryFailedAgent && (
+                <button
+                  className="flow-summary-retry"
+                  type="button"
+                  onClick={retryFailedAgent}
+                  disabled={retryingAgent !== null}
+                >
+                  {retryingAgent ? 'Retrying...' : 'Retry Failed Agent'}
+                </button>
               )}
             </div>
           )}

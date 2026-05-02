@@ -27,7 +27,7 @@
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
 | **Run Full Agent Flow** | ✅ Production 검증 완료 — 5단계 순차 실행, agent_traces 5개 저장 확인 |
 | **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, 5 agent 요약, 토큰/레이턴시, 접기/펼치기 |
-| **Work Request Input** | ✅ 업무 요청 직접 입력 → Full Flow 시작 입력으로 사용, 3초 cooldown, 실행 중 비활성화 |
+| **Work Request Input** | ✅ 업무 요청 직접 입력 → Full Flow 시작 입력으로 사용, 5초 cooldown, 실행 중 비활성화 |
 | **UI Layout Refresh** | ✅ Top Command / Main Simulation / Right Tabs / Bottom Event Log 4영역 정리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
@@ -78,8 +78,10 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - Event Log에 `[FLOW]`, `[Planner]`, `[Architect]` 등 단계별 메시지 기록
   - Debug Panel에 각 단계 `provider`·`model`·`latencyMs`·`inputTokens`·`outputTokens` 업데이트
   - 완료 시 전체 누적 token + latency 요약을 Debug Panel `last flow`에 표시
-  - 실행 중 버튼·입력창 비활성화("Running Flow..."), 완료 후 **3초 cooldown**("⏳ Wait...")
-  - 단계별 실패 시 Flow 중단 + 앱 계속 동작
+  - 실행 중 버튼·입력창 비활성화("Running Flow..."), 완료 후 **5초 cooldown**("⏳ Wait 5s")
+  - 개별 Agent 버튼은 호출 중 중복 클릭 차단 + 호출 후 **3초 cooldown**("Wait 3s")
+  - 단계별 실패 시 Flow 중단 + failedAgent/failReason Summary 표시 + 해당 단계만 재시도 가능
+  - mock fallback 사용 시 Event Log와 Summary `mockFallbackAgents`에 명확히 표시
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
 
@@ -104,9 +106,10 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - **Summary 탭** — Full Flow Summary Panel 표시. Run Full Flow 실행 후 표시됨
   - `running` (amber) · `completed` (green) · `failed` (red) 상태 배지
   - 5개 에이전트별 summary 텍스트, Reviewer `approvalStatus` badge, QA `finalStatus` badge
-  - 총 latency · input tokens · output tokens 메트릭 그리드
+  - `totalInputTokens` · `totalOutputTokens` · `totalTokens` · `totalLatencyMs` 메트릭 그리드
   - 완료 시각 KST `HH:mm:ss` 표시
-  - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록 표시
+  - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록, **Retry Failed Agent** 버튼 표시
+  - mock fallback 발생 시 사용된 에이전트 목록 표시
 - **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
 - **Traces 탭** — Agent Trace Viewer에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
@@ -303,7 +306,7 @@ ActionBar 상단에 업무 요청 입력창이 있습니다.
 
 4. **완료 후**
    - Full Flow Summary Panel에서 5개 에이전트 결과를 확인합니다
-   - 3초 cooldown(버튼에 "⏳ Wait..." 표시) 후 다시 실행 가능합니다
+   - 5초 cooldown(버튼에 "⏳ Wait 5s" 표시) 후 다시 실행 가능합니다
    - 입력창을 수정해 다른 요청으로 재실행할 수 있습니다
 
 ### 동작 상세
@@ -313,7 +316,17 @@ ActionBar 상단에 업무 요청 입력창이 있습니다.
 | 입력 없음 + 대기 | ⚡ Run Full Flow | 현재 최우선 task 기반 실행 |
 | 입력 있음 + 대기 | ⚡ Run Flow from Request | 입력 내용 기반 실행 |
 | 실행 중 | Running Flow... (비활성) | 입력창도 비활성화 |
-| Cooldown 중 | ⏳ Wait... (비활성) | 입력창은 수정 가능 |
+| Cooldown 중 | ⏳ Wait 5s (비활성) | 입력창은 수정 가능 |
+
+### 비용/호출 제한 안정화
+
+- Full Flow 실행 중에는 Run Full Flow 버튼과 Work Request 입력창이 비활성화되어 중복 실행을 막습니다.
+- Full Flow 종료 후 5초 동안 재실행할 수 없고, Planner/Architect/Developer/Reviewer/QA 개별 버튼은 호출 후 3초 동안 `Wait 3s` 상태가 됩니다.
+- 같은 Agent가 이미 호출 중이면 해당 Agent 버튼은 `Busy...` 또는 실행 중 상태로 잠겨 연속 클릭 비용을 방지합니다.
+- 특정 단계 실패 시 남은 단계는 중단되고, Event Log와 Full Flow Summary에 failedAgent/failReason이 남습니다.
+- Summary의 **Retry Failed Agent** 버튼은 실패한 Agent API만 다시 호출하며, 성공하면 Summary와 Debug Panel의 token/latency/provider 값이 갱신됩니다.
+- `provider:"mock"` fallback이 발생하면 Event Log에 `[FLOW] Agent used mock fallback` 로그가 남고 Summary에도 `mockFallbackAgents`로 표시됩니다.
+- Supabase DB 구조는 변경하지 않고 UI state와 기존 `agent_traces` 기록만 사용합니다.
 
 ---
 
