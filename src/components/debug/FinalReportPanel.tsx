@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type FullFlowSummaryData } from '@/store/debugStore';
 
@@ -31,6 +31,10 @@ const ACTION_KEYWORDS = [
   'confirm',
   'check',
 ];
+
+const REPORT_HISTORY_KEY = 'ai-agent-office:report-history';
+const REPORT_HISTORY_EVENT = 'ai-agent-office:report-history-updated';
+const MAX_REPORT_HISTORY = 5;
 
 const SUMMARY_KEYS = [
   'summary',
@@ -79,6 +83,15 @@ interface FinalReport {
   totalTokens: number;
   totalLatencyMs: number;
   completedAt: number | null;
+  mockFallbackAgents: string[];
+}
+
+interface ReportHistoryItem {
+  id: string;
+  title: string;
+  createdAt: number | null;
+  report: FinalReport;
+  markdown: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -123,8 +136,24 @@ function maybeParseJson(value: string): unknown | null {
   return null;
 }
 
+function humanizeString(value: string, depth = 0): string {
+  const cleaned = compactWhitespace(stripCodeFence(value));
+  if (depth >= 2) return cleaned;
+
+  const parsed = maybeParseJson(cleaned);
+  if (typeof parsed === 'string') return humanizeString(parsed, depth + 1);
+  if (isRecord(parsed)) return parseRecordBlock(parsed).text;
+  if (Array.isArray(parsed)) {
+    const bullets: string[] = [];
+    collectArrayItems(parsed, bullets);
+    return bullets.join(' / ') || cleaned;
+  }
+
+  return cleaned;
+}
+
 function stringifyPrimitive(value: unknown): string | null {
-  if (typeof value === 'string') return compactWhitespace(stripCodeFence(value));
+  if (typeof value === 'string') return humanizeString(value);
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return null;
 }
@@ -294,6 +323,7 @@ function buildReport(data: FullFlowSummaryData): FinalReport | null {
     totalTokens,
     totalLatencyMs: data.totalLatencyMs,
     completedAt: data.completedAt,
+    mockFallbackAgents: data.mockFallbackAgents,
   };
 }
 
@@ -341,7 +371,82 @@ function buildMarkdown(report: FinalReport): string {
     `- totalTokens: ${report.totalTokens}`,
     `- totalLatencyMs: ${report.totalLatencyMs}ms`,
     `- completedAt: ${report.completedAt ? `${formatKstTime(report.completedAt)} KST` : 'unknown'}`,
+    report.mockFallbackAgents.length > 0 ? `- mockFallbackAgents: ${report.mockFallbackAgents.join(', ')}` : '- mockFallbackAgents: none',
   ].join('\n');
+}
+
+function parseReportHistory(raw: string | null): ReportHistoryItem[] {
+  try {
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is ReportHistoryItem =>
+        isRecord(item) &&
+        typeof item.id === 'string' &&
+        typeof item.title === 'string' &&
+        isRecord(item.report) &&
+        typeof item.markdown === 'string',
+      )
+      .slice(0, MAX_REPORT_HISTORY);
+  } catch {
+    return [];
+  }
+}
+
+function getReportHistorySnapshot(): string {
+  if (typeof window === 'undefined') return '[]';
+  return window.localStorage.getItem(REPORT_HISTORY_KEY) ?? '[]';
+}
+
+function subscribeReportHistory(onStoreChange: () => void) {
+  if (typeof window === 'undefined') return () => {};
+
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === REPORT_HISTORY_KEY) onStoreChange();
+  };
+  window.addEventListener(REPORT_HISTORY_EVENT, onStoreChange);
+  window.addEventListener('storage', onStorage);
+
+  return () => {
+    window.removeEventListener(REPORT_HISTORY_EVENT, onStoreChange);
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+function readReportHistory(): ReportHistoryItem[] {
+  return parseReportHistory(getReportHistorySnapshot());
+}
+
+function writeReportHistory(history: ReportHistoryItem[]) {
+  window.localStorage.setItem(
+    REPORT_HISTORY_KEY,
+    JSON.stringify(history.slice(0, MAX_REPORT_HISTORY)),
+  );
+  window.dispatchEvent(new Event(REPORT_HISTORY_EVENT));
+}
+
+function buildHistoryItem(report: FinalReport, markdown: string): ReportHistoryItem {
+  const id = `${report.completedAt ?? report.title}-${report.totalTokens}-${report.totalLatencyMs}`;
+  return {
+    id,
+    title: report.title,
+    createdAt: report.completedAt,
+    report,
+    markdown,
+  };
+}
+
+function buildMarkdownFilename(report: FinalReport): string {
+  const date = report.completedAt ? new Date(report.completedAt) : new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const stamp = [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+  ].join('');
+  const time = `${pad(date.getHours())}${pad(date.getMinutes())}`;
+  return `ai-agent-report-${stamp}-${time}.md`;
 }
 
 function ReportSection({ title, block }: { title: string; block: ReportBlock }) {
@@ -363,15 +468,37 @@ function ReportSection({ title, block }: { title: string; block: ReportBlock }) 
 export default function FinalReportPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const data = useDebugStore(s => s.fullFlowData);
   const report = useMemo(() => data ? buildReport(data) : null, [data]);
   const markdown = useMemo(() => report ? buildMarkdown(report) : '', [report]);
+  const historySnapshot = useSyncExternalStore(
+    subscribeReportHistory,
+    getReportHistorySnapshot,
+    () => '[]',
+  );
+  const history = useMemo(() => parseReportHistory(historySnapshot), [historySnapshot]);
+  const selectedHistoryItem = history.find(item => item.id === selectedHistoryId) ?? null;
+  const displayReport = selectedHistoryItem?.report ?? report;
+  const displayMarkdown = selectedHistoryItem?.markdown ?? markdown;
+
+  useEffect(() => {
+    if (!report || !markdown) return;
+
+    const item = buildHistoryItem(report, markdown);
+    const current = readReportHistory();
+    if (current[0]?.id === item.id) return;
+
+    const next = [item, ...current.filter(historyItem => historyItem.id !== item.id)]
+      .slice(0, MAX_REPORT_HISTORY);
+    writeReportHistory(next);
+  }, [report, markdown]);
 
   async function copyReport() {
-    if (!report) return;
+    if (!displayReport) return;
 
     try {
-      await navigator.clipboard.writeText(markdown);
+      await navigator.clipboard.writeText(displayMarkdown);
       setCopyState('copied');
       window.setTimeout(() => setCopyState('idle'), 1800);
     } catch {
@@ -381,13 +508,13 @@ export default function FinalReportPanel() {
   }
 
   function downloadMarkdown() {
-    if (!report) return;
+    if (!displayReport) return;
 
-    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const blob = new Blob([displayMarkdown], { type: 'text/markdown;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'ai-agent-report.md';
+    anchor.download = buildMarkdownFilename(displayReport);
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -406,14 +533,14 @@ export default function FinalReportPanel() {
           aria-expanded={!collapsed}
         >
           <span>FINAL REPORT</span>
-          <strong>{report ? 'READY' : 'WAITING'}</strong>
+          <strong>{displayReport ? 'READY' : 'WAITING'}</strong>
         </button>
         <div className="final-report-header-actions">
           <button
             className="trace-refresh-btn"
             type="button"
             onClick={copyReport}
-            disabled={!report}
+            disabled={!displayReport}
           >
             {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Failed' : 'Copy Report'}
           </button>
@@ -421,15 +548,15 @@ export default function FinalReportPanel() {
             className="trace-refresh-btn"
             type="button"
             onClick={downloadMarkdown}
-            disabled={!report}
+            disabled={!displayReport}
           >
-            Download MD
+            Download Markdown
           </button>
           <button
             className="trace-refresh-btn"
             type="button"
             onClick={printReport}
-            disabled={!report}
+            disabled={!displayReport}
           >
             Print
           </button>
@@ -446,52 +573,90 @@ export default function FinalReportPanel() {
 
       {!collapsed && (
         <div className="final-report-body">
-          {!report && (
+          {!displayReport && (
             <div className="final-report-empty">
               Run Full Flow to generate a report.
             </div>
           )}
 
-          {report && (
+          {displayReport && (
             <>
               <div className="final-report-title-card">
                 <span>제목</span>
-                <h3>{report.title}</h3>
+                <h3>{displayReport.title}</h3>
               </div>
 
               <div className="final-report-section">
                 <span>Original Request</span>
-                <p>{report.originalRequest}</p>
+                <p>{displayReport.originalRequest}</p>
               </div>
-              <ReportSection title="Executive Summary" block={report.executiveSummary} />
-              <ReportSection title="Planner 분석 요약" block={report.planner} />
-              <ReportSection title="Architect 구조/운영 검토 요약" block={report.architect} />
-              <ReportSection title="Developer 실행/구현 계획 요약" block={report.developer} />
-              <ReportSection title="Reviewer 검토 의견" block={report.reviewer} />
-              <ReportSection title="QA 검증 결과" block={report.qa} />
+              <ReportSection title="Executive Summary" block={displayReport.executiveSummary} />
+              <ReportSection title="Planner 분석 요약" block={displayReport.planner} />
+              <ReportSection title="Architect 구조/운영 검토 요약" block={displayReport.architect} />
+              <ReportSection title="Developer 실행/구현 계획 요약" block={displayReport.developer} />
+              <ReportSection title="Reviewer 검토 의견" block={displayReport.reviewer} />
+              <ReportSection title="QA 검증 결과" block={displayReport.qa} />
 
               <div className="final-report-recommendation">
                 <span>Final Recommendation</span>
-                <strong>{report.finalRecommendation}</strong>
+                <strong>{displayReport.finalRecommendation}</strong>
               </div>
+
+              {displayReport.mockFallbackAgents.length > 0 && (
+                <div className="final-report-warning">
+                  <span>Mock fallback</span>
+                  <strong>{displayReport.mockFallbackAgents.join(' / ')}</strong>
+                </div>
+              )}
 
               <div className="final-report-actions">
                 <span>Next Actions</span>
                 <ol>
-                  {report.nextActions.map(action => (
+                  {displayReport.nextActions.map(action => (
                     <li key={action}>{action}</li>
                   ))}
                 </ol>
               </div>
 
               <div className="final-report-ops">
-                <span>tokens {report.totalTokens}</span>
-                <span>input {report.totalInputTokens}</span>
-                <span>output {report.totalOutputTokens}</span>
-                <span>latency {report.totalLatencyMs}ms</span>
-                {report.completedAt && <span>{formatKstTime(report.completedAt)} KST</span>}
+                <span>tokens {displayReport.totalTokens}</span>
+                <span>input {displayReport.totalInputTokens}</span>
+                <span>output {displayReport.totalOutputTokens}</span>
+                <span>latency {displayReport.totalLatencyMs}ms</span>
+                {displayReport.completedAt && <span>{formatKstTime(displayReport.completedAt)} KST</span>}
               </div>
             </>
+          )}
+
+          {history.length > 0 && (
+            <div className="final-report-history">
+              <div className="final-report-history-header">
+                <span>Report History</span>
+                <strong>localStorage · recent {history.length}</strong>
+              </div>
+              <div className="final-report-history-list">
+                {history.map(item => (
+                  <button
+                    key={item.id}
+                    className={`final-report-history-item${selectedHistoryId === item.id ? ' final-report-history-item--active' : ''}`}
+                    type="button"
+                    onClick={() => setSelectedHistoryId(item.id)}
+                  >
+                    <span>{item.title}</span>
+                    <strong>{item.createdAt ? `${formatKstTime(item.createdAt)} KST` : 'draft'}</strong>
+                  </button>
+                ))}
+                {selectedHistoryId && (
+                  <button
+                    className="final-report-history-clear"
+                    type="button"
+                    onClick={() => setSelectedHistoryId(null)}
+                  >
+                    Show latest report
+                  </button>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}

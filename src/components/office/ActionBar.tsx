@@ -75,6 +75,33 @@ const AGENT_LABELS: Record<AgentRole, string> = {
   qa: 'QA',
 };
 
+const WORK_REQUEST_TEMPLATES = [
+  {
+    label: '미팅 정리',
+    prompt: '오늘 미팅 내용을 업무 보고서로 정리하고, 결정사항/담당자/후속 액션/리스크를 구분해서 제안해줘.',
+  },
+  {
+    label: '영업 제안서',
+    prompt: '신규 고객에게 보낼 영업 제안서 초안을 만들기 위해 핵심 가치, 제안 구조, 예상 질문, 후속 액션을 정리해줘.',
+  },
+  {
+    label: '운영 리스크 검토',
+    prompt: '현재 운영 프로세스의 리스크를 점검하고, 장애 가능성/고객 영향/완화 방안/QA 체크리스트를 정리해줘.',
+  },
+  {
+    label: '자동화 설계',
+    prompt: '반복 업무를 자동화하기 위한 시스템 구조, 데이터 흐름, 구현 단계, 테스트 계획을 설계해줘.',
+  },
+  {
+    label: '거래처 회신 초안',
+    prompt: '거래처 문의에 답변하기 위한 회신 초안을 만들고, 확인해야 할 정보와 리스크, 다음 액션을 정리해줘.',
+  },
+  {
+    label: '정산 검토',
+    prompt: '정산 내역을 검토하기 위한 확인 항목, 예외 케이스, 담당자별 후속 작업, 최종 검증 체크리스트를 정리해줘.',
+  },
+];
+
 function pickHighestPriorityTask(tasks: SimTask[]): SimTask | undefined {
   return tasks
     .filter(task => task.status !== 'done')
@@ -789,6 +816,16 @@ export default function ActionBar() {
   const plannerBlocked = plannerBusy || flowBlocked || plannerCooldown;
   const anyBusy     = flowBlocked || plannerBusy || plannerCooldown;
 
+  function applyWorkRequestTemplate(prompt: string) {
+    const current = workRequest.trim();
+    if (current && current !== prompt) {
+      const shouldOverwrite = window.confirm('기존 Work Request 내용을 템플릿으로 덮어쓸까요?');
+      if (!shouldOverwrite) return;
+    }
+
+    setWorkRequest(prompt);
+  }
+
   return (
     <div className="action-bar">
       {/* ── Work Request row ─────────────────────────────────────────── */}
@@ -806,6 +843,20 @@ export default function ActionBar() {
           disabled={flowBusy}
           aria-label="업무 요청 입력"
         />
+        <div className="work-request-templates" aria-label="Work Request templates">
+          {WORK_REQUEST_TEMPLATES.map(template => (
+            <button
+              key={template.label}
+              className="work-request-template-btn"
+              type="button"
+              onClick={() => applyWorkRequestTemplate(template.prompt)}
+              disabled={flowBusy}
+              title={`${template.label} 템플릿 입력`}
+            >
+              {template.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── Action buttons row ────────────────────────────────────────── */}
