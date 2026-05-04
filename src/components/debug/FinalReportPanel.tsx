@@ -7,7 +7,7 @@ import { useDebugStore, type FullFlowSummaryData } from '@/store/debugStore';
 const DEFAULT_NEXT_ACTIONS = [
   '담당자별 후속 작업 확인',
   '리스크 항목 재검토',
-  'QA 체크리스트 기준으로 최종 확인',
+  'QA 체크리스트 기준 최종 확인',
 ];
 
 const ACTION_KEYWORDS = [
@@ -20,6 +20,8 @@ const ACTION_KEYWORDS = [
   '보완',
   '테스트',
   '검증',
+  '후속',
+  '체크',
   'review',
   'test',
   'verify',
@@ -27,17 +29,49 @@ const ACTION_KEYWORDS = [
   'update',
   'implement',
   'confirm',
+  'check',
 ];
+
+const SUMMARY_KEYS = [
+  'summary',
+  'executiveSummary',
+  'analysis',
+  'result',
+  'recommendation',
+  'finalRecommendation',
+  'message',
+];
+
+const ARRAY_KEYS = [
+  'steps',
+  'risks',
+  'architectureNotes',
+  'dataFlow',
+  'implementationPlan',
+  'filesToChange',
+  'testPlan',
+  'reviewFindings',
+  'suggestedChanges',
+  'testCases',
+  'regressionChecks',
+  'qualityRisks',
+  'nextActions',
+];
+
+interface ReportBlock {
+  text: string;
+  bullets: string[];
+}
 
 interface FinalReport {
   title: string;
   originalRequest: string;
-  executiveSummary: string;
-  planner: string;
-  architect: string;
-  developer: string;
-  reviewer: string;
-  qa: string;
+  executiveSummary: ReportBlock;
+  planner: ReportBlock;
+  architect: ReportBlock;
+  developer: ReportBlock;
+  reviewer: ReportBlock;
+  qa: ReportBlock;
   finalRecommendation: string;
   nextActions: string[];
   totalInputTokens: number;
@@ -47,8 +81,130 @@ interface FinalReport {
   completedAt: number | null;
 }
 
-function cleanText(value: string | null): string {
-  return value?.trim() || '아직 요약이 없습니다.';
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stripCodeFence(value: string): string {
+  const trimmed = value.trim();
+  const fenced = trimmed.match(/^```(?:json|markdown|md)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
+function compactWhitespace(value: string): string {
+  return value
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function maybeParseJson(value: string): unknown | null {
+  const cleaned = stripCodeFence(value);
+  const candidates = [
+    cleaned,
+    cleaned.replace(/\\"/g, '"'),
+  ];
+
+  const objectMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (objectMatch) {
+    candidates.push(objectMatch[0]);
+    candidates.push(objectMatch[0].replace(/\\"/g, '"'));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Keep trying safer candidates.
+    }
+  }
+
+  return null;
+}
+
+function stringifyPrimitive(value: unknown): string | null {
+  if (typeof value === 'string') return compactWhitespace(stripCodeFence(value));
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return null;
+}
+
+function collectArrayItems(value: unknown, sink: string[]) {
+  if (Array.isArray(value)) {
+    value.forEach(item => {
+      const primitive = stringifyPrimitive(item);
+      if (primitive) sink.push(primitive);
+      else if (isRecord(item)) {
+        const nested = parseRecordBlock(item);
+        if (nested.text) sink.push(nested.text);
+        sink.push(...nested.bullets);
+      }
+    });
+    return;
+  }
+
+  if (isRecord(value)) {
+    Object.entries(value).forEach(([key, nested]) => {
+      if (ARRAY_KEYS.includes(key)) collectArrayItems(nested, sink);
+    });
+  }
+}
+
+function findSummaryText(record: Record<string, unknown>): string | null {
+  for (const key of SUMMARY_KEYS) {
+    const value = stringifyPrimitive(record[key]);
+    if (value) return value;
+  }
+
+  for (const value of Object.values(record)) {
+    const primitive = stringifyPrimitive(value);
+    if (primitive && primitive.length >= 8) return primitive;
+  }
+
+  return null;
+}
+
+function parseRecordBlock(record: Record<string, unknown>): ReportBlock {
+  const bullets: string[] = [];
+  Object.entries(record).forEach(([key, value]) => {
+    if (ARRAY_KEYS.includes(key)) collectArrayItems(value, bullets);
+  });
+
+  return {
+    text: findSummaryText(record) ?? '요약 문장이 없습니다.',
+    bullets: Array.from(new Set(bullets)).slice(0, 8),
+  };
+}
+
+function parseReportBlock(value: string | null, fallback: string): ReportBlock {
+  if (!value?.trim()) {
+    return { text: fallback, bullets: [] };
+  }
+
+  const cleaned = compactWhitespace(stripCodeFence(value));
+  const parsed = maybeParseJson(cleaned);
+
+  if (typeof parsed === 'string') {
+    return parseReportBlock(parsed, fallback);
+  }
+
+  if (isRecord(parsed)) {
+    return parseRecordBlock(parsed);
+  }
+
+  if (Array.isArray(parsed)) {
+    const bullets: string[] = [];
+    collectArrayItems(parsed, bullets);
+    return {
+      text: fallback,
+      bullets: Array.from(new Set(bullets)).slice(0, 8),
+    };
+  }
+
+  return {
+    text: cleaned,
+    bullets: [],
+  };
 }
 
 function buildTitle(data: FullFlowSummaryData): string {
@@ -73,17 +229,12 @@ function splitSentences(text: string): string[] {
     .filter(sentence => sentence.length >= 8);
 }
 
-function buildNextActions(data: FullFlowSummaryData): string[] {
-  const source = [
-    data.plannerSummary,
-    data.architectSummary,
-    data.developerSummary,
-    data.reviewerSummary,
-    data.qaSummary,
-  ]
-    .filter(Boolean)
-    .join(' ');
+function blockToText(block: ReportBlock): string {
+  return [block.text, ...block.bullets].join(' ');
+}
 
+function buildNextActions(blocks: ReportBlock[]): string[] {
+  const source = blocks.map(blockToText).join(' ');
   const extracted = splitSentences(source)
     .filter(sentence => {
       const lower = sentence.toLowerCase();
@@ -96,36 +247,61 @@ function buildNextActions(data: FullFlowSummaryData): string[] {
   return unique.length > 0 ? unique : DEFAULT_NEXT_ACTIONS;
 }
 
-function buildExecutiveSummary(data: FullFlowSummaryData, recommendation: string): string {
+function buildExecutiveSummary(
+  data: FullFlowSummaryData,
+  planner: ReportBlock,
+  recommendation: string,
+): ReportBlock {
   const reviewerStatus = data.reviewerApprovalStatus ?? 'unknown';
   const qaStatus = data.qaFinalStatus ?? 'unknown';
-  const planner = cleanText(data.plannerSummary);
-  return `${planner} Reviewer 상태는 ${reviewerStatus}, QA 최종 상태는 ${qaStatus}입니다. 최종 권고는 "${recommendation}"입니다.`;
+
+  return {
+    text: `${planner.text} Reviewer 상태는 ${reviewerStatus}, QA 최종 상태는 ${qaStatus}입니다. 최종 권고는 "${recommendation}"입니다.`,
+    bullets: [],
+  };
 }
 
 function buildReport(data: FullFlowSummaryData): FinalReport | null {
   if (data.status !== 'completed') return null;
 
+  const planner = parseReportBlock(data.plannerSummary, 'Planner 분석 요약이 없습니다.');
+  const architect = parseReportBlock(data.architectSummary, 'Architect 구조/운영 검토 요약이 없습니다.');
+  const developer = parseReportBlock(data.developerSummary, 'Developer 실행/구현 계획 요약이 없습니다.');
+  const reviewer = parseReportBlock(data.reviewerSummary, 'Reviewer 검토 의견이 없습니다.');
+  const qa = parseReportBlock(data.qaSummary, 'QA 검증 결과가 없습니다.');
   const finalRecommendation = buildFinalRecommendation(data);
   const totalTokens = data.totalInputTokens + data.totalOutputTokens;
 
   return {
     title: buildTitle(data),
     originalRequest: data.originalRequest?.trim() || '기존 최우선 태스크 기반 Full Flow 실행',
-    executiveSummary: buildExecutiveSummary(data, finalRecommendation),
-    planner: cleanText(data.plannerSummary),
-    architect: cleanText(data.architectSummary),
-    developer: cleanText(data.developerSummary),
-    reviewer: `${cleanText(data.reviewerSummary)} Approval: ${data.reviewerApprovalStatus ?? 'unknown'}.`,
-    qa: `${cleanText(data.qaSummary)} Final status: ${data.qaFinalStatus ?? 'unknown'}.`,
+    executiveSummary: buildExecutiveSummary(data, planner, finalRecommendation),
+    planner,
+    architect,
+    developer,
+    reviewer: {
+      text: reviewer.text,
+      bullets: [...reviewer.bullets, `Approval Status: ${data.reviewerApprovalStatus ?? 'unknown'}`],
+    },
+    qa: {
+      text: qa.text,
+      bullets: [...qa.bullets, `Final Status: ${data.qaFinalStatus ?? 'unknown'}`],
+    },
     finalRecommendation,
-    nextActions: buildNextActions(data),
+    nextActions: buildNextActions([planner, architect, developer, reviewer, qa]),
     totalInputTokens: data.totalInputTokens,
     totalOutputTokens: data.totalOutputTokens,
     totalTokens,
     totalLatencyMs: data.totalLatencyMs,
     completedAt: data.completedAt,
   };
+}
+
+function markdownBlock(block: ReportBlock): string[] {
+  return [
+    block.text,
+    ...block.bullets.map(item => `- ${item}`),
+  ];
 }
 
 function buildMarkdown(report: FinalReport): string {
@@ -136,22 +312,22 @@ function buildMarkdown(report: FinalReport): string {
     report.originalRequest,
     '',
     '## Executive Summary',
-    report.executiveSummary,
+    ...markdownBlock(report.executiveSummary),
     '',
     '## Planner 분석 요약',
-    report.planner,
+    ...markdownBlock(report.planner),
     '',
     '## Architect 구조/운영 검토 요약',
-    report.architect,
+    ...markdownBlock(report.architect),
     '',
-    '## Developer 구현/자동화 계획 요약',
-    report.developer,
+    '## Developer 실행/구현 계획 요약',
+    ...markdownBlock(report.developer),
     '',
-    '## Reviewer 리스크/검토 의견',
-    report.reviewer,
+    '## Reviewer 검토 의견',
+    ...markdownBlock(report.reviewer),
     '',
-    '## QA 테스트/검증 체크리스트',
-    report.qa,
+    '## QA 검증 결과',
+    ...markdownBlock(report.qa),
     '',
     '## Final Recommendation',
     report.finalRecommendation,
@@ -168,11 +344,18 @@ function buildMarkdown(report: FinalReport): string {
   ].join('\n');
 }
 
-function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
+function ReportSection({ title, block }: { title: string; block: ReportBlock }) {
   return (
     <div className="final-report-section">
       <span>{title}</span>
-      <p>{children}</p>
+      <p>{block.text}</p>
+      {block.bullets.length > 0 && (
+        <ul>
+          {block.bullets.map(item => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -182,18 +365,35 @@ export default function FinalReportPanel() {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const data = useDebugStore(s => s.fullFlowData);
   const report = useMemo(() => data ? buildReport(data) : null, [data]);
+  const markdown = useMemo(() => report ? buildMarkdown(report) : '', [report]);
 
   async function copyReport() {
     if (!report) return;
 
     try {
-      await navigator.clipboard.writeText(buildMarkdown(report));
+      await navigator.clipboard.writeText(markdown);
       setCopyState('copied');
       window.setTimeout(() => setCopyState('idle'), 1800);
     } catch {
       setCopyState('failed');
       window.setTimeout(() => setCopyState('idle'), 2200);
     }
+  }
+
+  function downloadMarkdown() {
+    if (!report) return;
+
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'ai-agent-report.md';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function printReport() {
+    window.print();
   }
 
   return (
@@ -208,29 +408,47 @@ export default function FinalReportPanel() {
           <span>FINAL REPORT</span>
           <strong>{report ? 'READY' : 'WAITING'}</strong>
         </button>
-        <button
-          className="trace-refresh-btn"
-          type="button"
-          onClick={copyReport}
-          disabled={!report}
-        >
-          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Failed' : 'Copy Report'}
-        </button>
-        <button
-          className="trace-refresh-btn"
-          type="button"
-          onClick={() => setCollapsed(value => !value)}
-          aria-label="접기/펼치기"
-        >
-          {collapsed ? 'OPEN' : 'CLOSE'}
-        </button>
+        <div className="final-report-header-actions">
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={copyReport}
+            disabled={!report}
+          >
+            {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Failed' : 'Copy Report'}
+          </button>
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={downloadMarkdown}
+            disabled={!report}
+          >
+            Download MD
+          </button>
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={printReport}
+            disabled={!report}
+          >
+            Print
+          </button>
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={() => setCollapsed(value => !value)}
+            aria-label="접기/펼치기"
+          >
+            {collapsed ? 'OPEN' : 'CLOSE'}
+          </button>
+        </div>
       </div>
 
       {!collapsed && (
         <div className="final-report-body">
           {!report && (
             <div className="final-report-empty">
-              Run Full Flow to generate a report
+              Run Full Flow to generate a report.
             </div>
           )}
 
@@ -241,27 +459,16 @@ export default function FinalReportPanel() {
                 <h3>{report.title}</h3>
               </div>
 
-              <ReportSection title="Original Request">
-                {report.originalRequest}
-              </ReportSection>
-              <ReportSection title="Executive Summary">
-                {report.executiveSummary}
-              </ReportSection>
-              <ReportSection title="Planner 분석 요약">
-                {report.planner}
-              </ReportSection>
-              <ReportSection title="Architect 구조/운영 검토 요약">
-                {report.architect}
-              </ReportSection>
-              <ReportSection title="Developer 구현/자동화 계획 요약">
-                {report.developer}
-              </ReportSection>
-              <ReportSection title="Reviewer 리스크/검토 의견">
-                {report.reviewer}
-              </ReportSection>
-              <ReportSection title="QA 테스트/검증 체크리스트">
-                {report.qa}
-              </ReportSection>
+              <div className="final-report-section">
+                <span>Original Request</span>
+                <p>{report.originalRequest}</p>
+              </div>
+              <ReportSection title="Executive Summary" block={report.executiveSummary} />
+              <ReportSection title="Planner 분석 요약" block={report.planner} />
+              <ReportSection title="Architect 구조/운영 검토 요약" block={report.architect} />
+              <ReportSection title="Developer 실행/구현 계획 요약" block={report.developer} />
+              <ReportSection title="Reviewer 검토 의견" block={report.reviewer} />
+              <ReportSection title="QA 검증 결과" block={report.qa} />
 
               <div className="final-report-recommendation">
                 <span>Final Recommendation</span>
