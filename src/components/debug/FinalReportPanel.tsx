@@ -10,29 +10,7 @@ const DEFAULT_NEXT_ACTIONS = [
   'QA 체크리스트 기준 최종 확인',
 ];
 
-const ACTION_KEYWORDS = [
-  '해야',
-  '필요',
-  '확인',
-  '검토',
-  '진행',
-  '수정',
-  '보완',
-  '테스트',
-  '검증',
-  '후속',
-  '체크',
-  'review',
-  'test',
-  'verify',
-  'fix',
-  'update',
-  'implement',
-  'confirm',
-  'check',
-];
-
-const REPORT_HISTORY_KEY = 'ai-agent-office:report-history';
+const REPORT_HISTORY_KEY = 'ai-agent-office:report-history:v2';
 const REPORT_HISTORY_EVENT = 'ai-agent-office:report-history-updated';
 const MAX_REPORT_HISTORY = 5;
 
@@ -61,6 +39,26 @@ const ARRAY_KEYS = [
   'qualityRisks',
   'nextActions',
 ];
+
+const JSON_STATUS_KEYS = [
+  'approvalStatus',
+  'finalStatus',
+  'nextAgent',
+  'provider',
+  'role',
+  'ok',
+];
+
+const JSON_KEY_PATTERN = new RegExp(
+  `"?(?:${[...SUMMARY_KEYS, ...ARRAY_KEYS, ...JSON_STATUS_KEYS].join('|')})"?\\s*:`,
+  'i',
+);
+
+const KNOWN_JSON_KEYS = new Set([
+  ...SUMMARY_KEYS,
+  ...ARRAY_KEYS,
+  ...JSON_STATUS_KEYS,
+]);
 
 interface ReportBlock {
   text: string;
@@ -136,20 +134,55 @@ function maybeParseJson(value: string): unknown | null {
   return null;
 }
 
-function humanizeString(value: string, depth = 0): string {
+function decodeJsonStringLiteral(value: string): string {
+  try {
+    return JSON.parse(`"${value.replace(/"/g, '\\"')}"`);
+  } catch {
+    return value;
+  }
+}
+
+function extractQuotedValues(value: string): string[] {
+  return Array.from(value.matchAll(/"((?:\\.|[^"\\])*)"/g))
+    .map(match => decodeJsonStringLiteral(match[1]).trim())
+    .filter(item =>
+      item.length >= 6 &&
+      !KNOWN_JSON_KEYS.has(item) &&
+      !/^(true|false|null|mock|claude|planner|architect|developer|reviewer|qa)$/i.test(item),
+    );
+}
+
+function sentenceFallback(value: string, fallback: string): string {
   const cleaned = compactWhitespace(stripCodeFence(value));
-  if (depth >= 2) return cleaned;
+  if (!cleaned) return fallback;
+
+  if (JSON_KEY_PATTERN.test(cleaned) || /^[{[]/.test(cleaned)) {
+    const quotedValues = extractQuotedValues(cleaned);
+    if (quotedValues.length > 0) {
+      return quotedValues.slice(0, 2).join(' ');
+    }
+    return fallback;
+  }
+
+  const sentences = splitSentences(cleaned);
+  if (sentences.length > 0) return sentences.slice(0, 2).join(' ');
+  return cleaned.length > 180 ? `${cleaned.slice(0, 180).trim()}...` : cleaned;
+}
+
+function humanizeString(value: string, fallback = '요약 문장이 없습니다.', depth = 0): string {
+  const cleaned = compactWhitespace(stripCodeFence(value));
+  if (depth >= 3) return sentenceFallback(cleaned, fallback);
 
   const parsed = maybeParseJson(cleaned);
-  if (typeof parsed === 'string') return humanizeString(parsed, depth + 1);
+  if (typeof parsed === 'string') return humanizeString(parsed, fallback, depth + 1);
   if (isRecord(parsed)) return parseRecordBlock(parsed).text;
   if (Array.isArray(parsed)) {
     const bullets: string[] = [];
     collectArrayItems(parsed, bullets);
-    return bullets.join(' / ') || cleaned;
+    return bullets.slice(0, 2).join(' ') || fallback;
   }
 
-  return cleaned;
+  return sentenceFallback(cleaned, fallback);
 }
 
 function stringifyPrimitive(value: unknown): string | null {
@@ -231,7 +264,7 @@ function parseReportBlock(value: string | null, fallback: string): ReportBlock {
   }
 
   return {
-    text: cleaned,
+    text: sentenceFallback(cleaned, fallback),
     bullets: [],
   };
 }
@@ -258,34 +291,83 @@ function splitSentences(text: string): string[] {
     .filter(sentence => sentence.length >= 8);
 }
 
-function blockToText(block: ReportBlock): string {
-  return [block.text, ...block.bullets].join(' ');
+function cleanList(items: Array<string | null | undefined>): string[] {
+  return Array.from(new Set(
+    items
+      .map(item => item ? humanizeString(item, '') : '')
+      .map(item => item.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter(item => item.length > 0 && !JSON_KEY_PATTERN.test(item)),
+  ));
 }
 
-function buildNextActions(blocks: ReportBlock[]): string[] {
-  const source = blocks.map(blockToText).join(' ');
-  const extracted = splitSentences(source)
-    .filter(sentence => {
-      const lower = sentence.toLowerCase();
-      return ACTION_KEYWORDS.some(keyword => lower.includes(keyword));
-    })
-    .map(sentence => sentence.replace(/^[-*\d.)\s]+/, '').trim())
-    .filter(Boolean);
+function buildStructuredBlock(
+  summary: string | null | undefined,
+  fallback: string,
+  groups: Array<Array<string | null | undefined>>,
+): ReportBlock {
+  const parsed = parseReportBlock(summary ?? null, fallback);
+  const bullets = cleanList([
+    ...parsed.bullets,
+    ...groups.flat(),
+  ]).filter(item => item !== parsed.text);
 
-  const unique = Array.from(new Set(extracted)).slice(0, 5);
-  return unique.length > 0 ? unique : DEFAULT_NEXT_ACTIONS;
+  return {
+    text: humanizeString(parsed.text, fallback),
+    bullets: bullets.slice(0, 10),
+  };
+}
+
+function buildNextActions(data: FullFlowSummaryData): string[] {
+  const developerActions = cleanList(
+    data.developerReport?.implementationPlan?.length
+      ? data.developerReport.implementationPlan
+      : parseReportBlock(data.developerSummary, '').bullets,
+  ).slice(0, 2);
+  const reviewerActions = cleanList(
+    data.reviewerReport?.suggestedChanges?.length
+      ? data.reviewerReport.suggestedChanges
+      : parseReportBlock(data.reviewerSummary, '').bullets,
+  ).slice(0, 2);
+  const qaSource = (data.qaReport?.testCases?.length ?? 0) > 0
+    ? data.qaReport?.testCases
+    : (data.qaReport?.regressionChecks?.length ?? 0) > 0
+      ? data.qaReport?.regressionChecks
+      : parseReportBlock(data.qaSummary, '').bullets;
+  const qaActions = cleanList(qaSource ?? []).slice(0, 2);
+  const actions = [...developerActions, ...reviewerActions, ...qaActions].slice(0, 6);
+
+  return actions.length > 0 ? actions : DEFAULT_NEXT_ACTIONS;
+}
+
+function formatApprovalStatus(status: FullFlowSummaryData['reviewerApprovalStatus']): string {
+  if (status === 'approved') return '승인';
+  if (status === 'changes_requested') return '수정 요청';
+  if (status === 'needs_more_info') return '추가 정보 필요';
+  return '미확인';
+}
+
+function formatQaStatus(status: FullFlowSummaryData['qaFinalStatus']): string {
+  if (status === 'passed') return '통과';
+  if (status === 'failed') return '실패';
+  if (status === 'needs_more_testing') return '추가 검증 필요';
+  return '미확인';
 }
 
 function buildExecutiveSummary(
   data: FullFlowSummaryData,
   planner: ReportBlock,
+  architect: ReportBlock,
+  developer: ReportBlock,
   recommendation: string,
 ): ReportBlock {
-  const reviewerStatus = data.reviewerApprovalStatus ?? 'unknown';
-  const qaStatus = data.qaFinalStatus ?? 'unknown';
-
   return {
-    text: `${planner.text} Reviewer 상태는 ${reviewerStatus}, QA 최종 상태는 ${qaStatus}입니다. 최종 권고는 "${recommendation}"입니다.`,
+    text: [
+      planner.text,
+      architect.text,
+      developer.text,
+      `Reviewer 검토 상태는 ${formatApprovalStatus(data.reviewerApprovalStatus)}이고 QA 검증 상태는 ${formatQaStatus(data.qaFinalStatus)}입니다.`,
+      `최종 권고는 "${recommendation}"입니다.`,
+    ].filter(Boolean).slice(0, 5).join(' '),
     bullets: [],
   };
 }
@@ -293,31 +375,68 @@ function buildExecutiveSummary(
 function buildReport(data: FullFlowSummaryData): FinalReport | null {
   if (data.status !== 'completed') return null;
 
-  const planner = parseReportBlock(data.plannerSummary, 'Planner 분석 요약이 없습니다.');
-  const architect = parseReportBlock(data.architectSummary, 'Architect 구조/운영 검토 요약이 없습니다.');
-  const developer = parseReportBlock(data.developerSummary, 'Developer 실행/구현 계획 요약이 없습니다.');
-  const reviewer = parseReportBlock(data.reviewerSummary, 'Reviewer 검토 의견이 없습니다.');
-  const qa = parseReportBlock(data.qaSummary, 'QA 검증 결과가 없습니다.');
+  const planner = buildStructuredBlock(
+    data.plannerReport?.summary ?? data.plannerSummary,
+    'Planner 분석 요약이 없습니다.',
+    [data.plannerReport?.steps ?? [], data.plannerReport?.risks ?? []],
+  );
+  const architect = buildStructuredBlock(
+    data.architectReport?.summary ?? data.architectSummary,
+    'Architect 구조/운영 검토 요약이 없습니다.',
+    [
+      data.architectReport?.architectureNotes ?? [],
+      data.architectReport?.dataFlow ?? [],
+      data.architectReport?.risks ?? [],
+    ],
+  );
+  const developer = buildStructuredBlock(
+    data.developerReport?.summary ?? data.developerSummary,
+    'Developer 실행/구현 계획 요약이 없습니다.',
+    [
+      data.developerReport?.implementationPlan ?? [],
+      data.developerReport?.filesToChange ?? [],
+      data.developerReport?.testPlan ?? [],
+      data.developerReport?.risks ?? [],
+    ],
+  );
+  const reviewer = buildStructuredBlock(
+    data.reviewerReport?.summary ?? data.reviewerSummary,
+    'Reviewer 검토 의견이 없습니다.',
+    [
+      data.reviewerReport?.reviewFindings ?? [],
+      data.reviewerReport?.suggestedChanges ?? [],
+      data.reviewerReport?.risks ?? [],
+    ],
+  );
+  const qa = buildStructuredBlock(
+    data.qaReport?.summary ?? data.qaSummary,
+    'QA 검증 결과가 없습니다.',
+    [
+      data.qaReport?.testCases ?? [],
+      data.qaReport?.regressionChecks ?? [],
+      data.qaReport?.qualityRisks ?? [],
+    ],
+  );
   const finalRecommendation = buildFinalRecommendation(data);
   const totalTokens = data.totalInputTokens + data.totalOutputTokens;
 
   return {
     title: buildTitle(data),
     originalRequest: data.originalRequest?.trim() || '기존 최우선 태스크 기반 Full Flow 실행',
-    executiveSummary: buildExecutiveSummary(data, planner, finalRecommendation),
+    executiveSummary: buildExecutiveSummary(data, planner, architect, developer, finalRecommendation),
     planner,
     architect,
     developer,
     reviewer: {
       text: reviewer.text,
-      bullets: [...reviewer.bullets, `Approval Status: ${data.reviewerApprovalStatus ?? 'unknown'}`],
+      bullets: [...reviewer.bullets, `Reviewer 승인 상태: ${formatApprovalStatus(data.reviewerApprovalStatus)}`],
     },
     qa: {
       text: qa.text,
-      bullets: [...qa.bullets, `Final Status: ${data.qaFinalStatus ?? 'unknown'}`],
+      bullets: [...qa.bullets, `QA 최종 상태: ${formatQaStatus(data.qaFinalStatus)}`],
     },
     finalRecommendation,
-    nextActions: buildNextActions([planner, architect, developer, reviewer, qa]),
+    nextActions: buildNextActions(data),
     totalInputTokens: data.totalInputTokens,
     totalOutputTokens: data.totalOutputTokens,
     totalTokens,
@@ -366,12 +485,12 @@ function buildMarkdown(report: FinalReport): string {
     ...report.nextActions.map((action, index) => `${index + 1}. ${action}`),
     '',
     '## Operational Info',
-    `- totalInputTokens: ${report.totalInputTokens}`,
-    `- totalOutputTokens: ${report.totalOutputTokens}`,
-    `- totalTokens: ${report.totalTokens}`,
-    `- totalLatencyMs: ${report.totalLatencyMs}ms`,
-    `- completedAt: ${report.completedAt ? `${formatKstTime(report.completedAt)} KST` : 'unknown'}`,
-    report.mockFallbackAgents.length > 0 ? `- mockFallbackAgents: ${report.mockFallbackAgents.join(', ')}` : '- mockFallbackAgents: none',
+    `- total input tokens: ${report.totalInputTokens}`,
+    `- total output tokens: ${report.totalOutputTokens}`,
+    `- total tokens: ${report.totalTokens}`,
+    `- total latency: ${report.totalLatencyMs}ms`,
+    `- completed at: ${report.completedAt ? `${formatKstTime(report.completedAt)} KST` : 'unknown'}`,
+    report.mockFallbackAgents.length > 0 ? `- mock fallback agents: ${report.mockFallbackAgents.join(', ')}` : '- mock fallback agents: none',
   ].join('\n');
 }
 

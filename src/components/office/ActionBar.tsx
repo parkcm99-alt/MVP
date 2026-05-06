@@ -434,18 +434,59 @@ export default function ActionBar() {
         mockFallbackAgents,
       };
 
-      if (agentId === 'planner') nextData.plannerSummary = result.summary || '(no summary)';
-      if (agentId === 'architect') nextData.architectSummary = result.summary || '(no summary)';
-      if (agentId === 'developer') nextData.developerSummary = result.summary || '(no summary)';
+      if (agentId === 'planner') {
+        const plannerResult = result as PlannerAgentResponse;
+        nextData.plannerSummary = plannerResult.summary || '(no summary)';
+        nextData.plannerReport = {
+          summary: plannerResult.summary ?? null,
+          steps: plannerResult.steps ?? [],
+          risks: plannerResult.risks ?? [],
+        };
+      }
+      if (agentId === 'architect') {
+        const architectResult = result as ArchitectAgentResponse;
+        nextData.architectSummary = architectResult.summary || '(no summary)';
+        nextData.architectReport = {
+          summary: architectResult.summary ?? null,
+          architectureNotes: architectResult.architectureNotes ?? [],
+          dataFlow: architectResult.dataFlow ?? [],
+          risks: architectResult.risks ?? [],
+        };
+      }
+      if (agentId === 'developer') {
+        const developerResult = result as DeveloperAgentResponse;
+        nextData.developerSummary = developerResult.summary || '(no summary)';
+        nextData.developerReport = {
+          summary: developerResult.summary ?? null,
+          implementationPlan: developerResult.implementationPlan ?? [],
+          filesToChange: developerResult.filesToChange ?? [],
+          testPlan: developerResult.testPlan ?? [],
+          risks: developerResult.risks ?? [],
+        };
+      }
       if (agentId === 'reviewer') {
         const reviewerResult = result as ReviewerAgentResponse;
         nextData.reviewerSummary = reviewerResult.summary || '(no summary)';
         nextData.reviewerApprovalStatus = reviewerResult.approvalStatus ?? null;
+        nextData.reviewerReport = {
+          summary: reviewerResult.summary ?? null,
+          reviewFindings: reviewerResult.reviewFindings ?? [],
+          suggestedChanges: reviewerResult.suggestedChanges ?? [],
+          risks: reviewerResult.risks ?? [],
+          approvalStatus: reviewerResult.approvalStatus ?? null,
+        };
       }
       if (agentId === 'qa') {
         const qaResult = result as QaAgentResponse;
         nextData.qaSummary = qaResult.summary || '(no summary)';
         nextData.qaFinalStatus = qaResult.finalStatus ?? null;
+        nextData.qaReport = {
+          summary: qaResult.summary ?? null,
+          testCases: qaResult.testCases ?? [],
+          regressionChecks: qaResult.regressionChecks ?? [],
+          qualityRisks: qaResult.qualityRisks ?? [],
+          finalStatus: qaResult.finalStatus ?? null,
+        };
       }
 
       setFullFlowData(nextData);
@@ -675,6 +716,38 @@ export default function ActionBar() {
         completedAgents: [...completedAgents],
         mockFallbackAgents: [...mockFallbackAgents],
         originalRequest: hasRequest ? trimmedRequest : null,
+        plannerReport: {
+          summary: plannerResult.summary ?? null,
+          steps: plannerResult.steps ?? [],
+          risks: plannerResult.risks ?? [],
+        },
+        architectReport: {
+          summary: architectResult.summary ?? null,
+          architectureNotes: architectResult.architectureNotes ?? [],
+          dataFlow: architectResult.dataFlow ?? [],
+          risks: architectResult.risks ?? [],
+        },
+        developerReport: {
+          summary: developerResult.summary ?? null,
+          implementationPlan: developerResult.implementationPlan ?? [],
+          filesToChange: developerResult.filesToChange ?? [],
+          testPlan: developerResult.testPlan ?? [],
+          risks: developerResult.risks ?? [],
+        },
+        reviewerReport: {
+          summary: reviewerResult.summary ?? null,
+          reviewFindings: reviewerResult.reviewFindings ?? [],
+          suggestedChanges: reviewerResult.suggestedChanges ?? [],
+          risks: reviewerResult.risks ?? [],
+          approvalStatus: reviewerResult.approvalStatus ?? null,
+        },
+        qaReport: {
+          summary: qaResult.summary ?? null,
+          testCases: qaResult.testCases ?? [],
+          regressionChecks: qaResult.regressionChecks ?? [],
+          qualityRisks: qaResult.qualityRisks ?? [],
+          finalStatus: qaResult.finalStatus ?? null,
+        },
       });
       setRetryFailedAgent(null);
       const totalTokens = totalInputTokens + totalOutputTokens;

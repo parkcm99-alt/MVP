@@ -5,6 +5,43 @@ import type { AgentRole } from '@/types';
 
 // ── Full Flow Summary ─────────────────────────────────────────────────────────
 
+export interface PlannerReportDetails {
+  summary: string | null;
+  steps: string[];
+  risks: string[];
+}
+
+export interface ArchitectReportDetails {
+  summary: string | null;
+  architectureNotes: string[];
+  dataFlow: string[];
+  risks: string[];
+}
+
+export interface DeveloperReportDetails {
+  summary: string | null;
+  implementationPlan: string[];
+  filesToChange: string[];
+  testPlan: string[];
+  risks: string[];
+}
+
+export interface ReviewerReportDetails {
+  summary: string | null;
+  reviewFindings: string[];
+  suggestedChanges: string[];
+  risks: string[];
+  approvalStatus: 'approved' | 'changes_requested' | 'needs_more_info' | null;
+}
+
+export interface QaReportDetails {
+  summary: string | null;
+  testCases: string[];
+  regressionChecks: string[];
+  qualityRisks: string[];
+  finalStatus: 'passed' | 'failed' | 'needs_more_testing' | null;
+}
+
 export interface FullFlowSummaryData {
   status: 'running' | 'completed' | 'failed';
   plannerSummary:          string | null;
@@ -24,6 +61,11 @@ export interface FullFlowSummaryData {
   mockFallbackAgents:      string[];
   /** The user's original work request text, if provided. */
   originalRequest:         string | null;
+  plannerReport?:          PlannerReportDetails | null;
+  architectReport?:        ArchitectReportDetails | null;
+  developerReport?:        DeveloperReportDetails | null;
+  reviewerReport?:         ReviewerReportDetails | null;
+  qaReport?:               QaReportDetails | null;
 }
 
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
