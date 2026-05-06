@@ -10,9 +10,10 @@ const DEFAULT_NEXT_ACTIONS = [
   'QA 체크리스트 기준 최종 확인',
 ];
 
-const REPORT_HISTORY_KEY = 'ai-agent-office:report-history:v2';
+const REPORT_HISTORY_KEY = 'ai-agent-office:report-history:v3';
 const REPORT_HISTORY_EVENT = 'ai-agent-office:report-history-updated';
 const MAX_REPORT_HISTORY = 5;
+const PARSE_WARNING = '해당 Agent 결과 일부를 정리하지 못했습니다. Summary 기준으로 요약합니다.';
 
 const SUMMARY_KEYS = [
   'summary',
@@ -53,6 +54,7 @@ const JSON_KEY_PATTERN = new RegExp(
   `"?(?:${[...SUMMARY_KEYS, ...ARRAY_KEYS, ...JSON_STATUS_KEYS].join('|')})"?\\s*:`,
   'i',
 );
+const RAW_KEY_NAME_PATTERN = new RegExp(`\\b(?:${ARRAY_KEYS.join('|')})\\b`, 'i');
 
 const KNOWN_JSON_KEYS = new Set([
   ...SUMMARY_KEYS,
@@ -134,6 +136,45 @@ function maybeParseJson(value: string): unknown | null {
   return null;
 }
 
+function looksLikeJson(value: string): boolean {
+  const cleaned = compactWhitespace(stripCodeFence(value));
+  return JSON_KEY_PATTERN.test(cleaned) || /^[{[]/.test(cleaned);
+}
+
+function safeParseAgentContent(value: unknown, depth = 0): unknown {
+  if (depth >= 5) return value;
+
+  if (Array.isArray(value)) {
+    return value.map(item => safeParseAgentContent(item, depth + 1));
+  }
+
+  if (isRecord(value)) {
+    const summary = value.summary;
+    if (typeof summary === 'string' && looksLikeJson(summary)) {
+      const nested = safeParseAgentContent(summary, depth + 1);
+      if (isRecord(nested)) {
+        return {
+          ...value,
+          ...nested,
+          summary: typeof nested.summary === 'string' ? nested.summary : value.summary,
+        };
+      }
+    }
+
+    return value;
+  }
+
+  if (typeof value !== 'string') return value;
+
+  const cleaned = compactWhitespace(stripCodeFence(value));
+  if (!cleaned) return '';
+
+  const parsed = maybeParseJson(cleaned);
+  if (parsed === null) return cleaned;
+
+  return safeParseAgentContent(parsed, depth + 1);
+}
+
 function decodeJsonStringLiteral(value: string): string {
   try {
     return JSON.parse(`"${value.replace(/"/g, '\\"')}"`);
@@ -148,7 +189,7 @@ function extractQuotedValues(value: string): string[] {
     .filter(item =>
       item.length >= 6 &&
       !KNOWN_JSON_KEYS.has(item) &&
-      !/^(true|false|null|mock|claude|planner|architect|developer|reviewer|qa)$/i.test(item),
+      !/^(true|false|null|mock|claude|planner|architect|developer|reviewer|qa|approved|changes_requested|needs_more_info|passed|failed|needs_more_testing)$/i.test(item),
     );
 }
 
@@ -156,25 +197,35 @@ function sentenceFallback(value: string, fallback: string): string {
   const cleaned = compactWhitespace(stripCodeFence(value));
   if (!cleaned) return fallback;
 
-  if (JSON_KEY_PATTERN.test(cleaned) || /^[{[]/.test(cleaned)) {
+  if (looksLikeJson(cleaned)) {
     const quotedValues = extractQuotedValues(cleaned);
     if (quotedValues.length > 0) {
-      return quotedValues.slice(0, 2).join(' ');
+      return sanitizeReportText(quotedValues.slice(0, 2).join(' '));
     }
     return fallback;
   }
 
   const sentences = splitSentences(cleaned);
-  if (sentences.length > 0) return sentences.slice(0, 2).join(' ');
-  return cleaned.length > 180 ? `${cleaned.slice(0, 180).trim()}...` : cleaned;
+  const safeText = sentences.length > 0 ? sentences.slice(0, 2).join(' ') : cleaned;
+  const sanitized = sanitizeReportText(safeText);
+  return sanitized.length > 180 ? `${sanitized.slice(0, 180).trim()}...` : sanitized;
+}
+
+function sanitizeReportText(value: string): string {
+  return value
+    .replace(RAW_KEY_NAME_PATTERN, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?。])/g, '$1')
+    .trim();
 }
 
 function humanizeString(value: string, fallback = '요약 문장이 없습니다.', depth = 0): string {
   const cleaned = compactWhitespace(stripCodeFence(value));
   if (depth >= 3) return sentenceFallback(cleaned, fallback);
 
-  const parsed = maybeParseJson(cleaned);
-  if (typeof parsed === 'string') return humanizeString(parsed, fallback, depth + 1);
+  const parsed = safeParseAgentContent(cleaned);
+  if (typeof parsed === 'string' && parsed !== cleaned) return humanizeString(parsed, fallback, depth + 1);
+  if (typeof parsed === 'string') return sentenceFallback(parsed, fallback);
   if (isRecord(parsed)) return parseRecordBlock(parsed).text;
   if (Array.isArray(parsed)) {
     const bullets: string[] = [];
@@ -244,9 +295,10 @@ function parseReportBlock(value: string | null, fallback: string): ReportBlock {
   }
 
   const cleaned = compactWhitespace(stripCodeFence(value));
-  const parsed = maybeParseJson(cleaned);
+  const parsed = safeParseAgentContent(cleaned);
+  const parseFailed = looksLikeJson(cleaned) && typeof parsed === 'string';
 
-  if (typeof parsed === 'string') {
+  if (typeof parsed === 'string' && parsed !== cleaned) {
     return parseReportBlock(parsed, fallback);
   }
 
@@ -265,7 +317,7 @@ function parseReportBlock(value: string | null, fallback: string): ReportBlock {
 
   return {
     text: sentenceFallback(cleaned, fallback),
-    bullets: [],
+    bullets: parseFailed ? [PARSE_WARNING] : [],
   };
 }
 
@@ -296,7 +348,8 @@ function cleanList(items: Array<string | null | undefined>): string[] {
     items
       .map(item => item ? humanizeString(item, '') : '')
       .map(item => item.replace(/^[-*\d.)\s]+/, '').trim())
-      .filter(item => item.length > 0 && !JSON_KEY_PATTERN.test(item)),
+      .map(sanitizeReportText)
+      .filter(item => item.length > 0 && !JSON_KEY_PATTERN.test(item) && !RAW_KEY_NAME_PATTERN.test(item)),
   ));
 }
 
@@ -318,21 +371,11 @@ function buildStructuredBlock(
 }
 
 function buildNextActions(data: FullFlowSummaryData): string[] {
-  const developerActions = cleanList(
-    data.developerReport?.implementationPlan?.length
-      ? data.developerReport.implementationPlan
-      : parseReportBlock(data.developerSummary, '').bullets,
-  ).slice(0, 2);
-  const reviewerActions = cleanList(
-    data.reviewerReport?.suggestedChanges?.length
-      ? data.reviewerReport.suggestedChanges
-      : parseReportBlock(data.reviewerSummary, '').bullets,
-  ).slice(0, 2);
+  const developerActions = cleanList(data.developerReport?.implementationPlan ?? []).slice(0, 2);
+  const reviewerActions = cleanList(data.reviewerReport?.suggestedChanges ?? []).slice(0, 2);
   const qaSource = (data.qaReport?.testCases?.length ?? 0) > 0
     ? data.qaReport?.testCases
-    : (data.qaReport?.regressionChecks?.length ?? 0) > 0
-      ? data.qaReport?.regressionChecks
-      : parseReportBlock(data.qaSummary, '').bullets;
+    : data.qaReport?.regressionChecks;
   const qaActions = cleanList(qaSource ?? []).slice(0, 2);
   const actions = [...developerActions, ...reviewerActions, ...qaActions].slice(0, 6);
 
@@ -353,6 +396,16 @@ function formatQaStatus(status: FullFlowSummaryData['qaFinalStatus']): string {
   return '미확인';
 }
 
+function summarizeOriginalRequest(request: string | null): string {
+  const summary = request?.trim()
+    ? sentenceFallback(request, '').slice(0, 140)
+    : '';
+
+  return summary
+    ? `요청은 "${summary}" 기준으로 분석했습니다.`
+    : '기존 최우선 태스크를 기준으로 전체 워크플로우를 실행했습니다.';
+}
+
 function buildExecutiveSummary(
   data: FullFlowSummaryData,
   planner: ReportBlock,
@@ -362,9 +415,9 @@ function buildExecutiveSummary(
 ): ReportBlock {
   return {
     text: [
+      summarizeOriginalRequest(data.originalRequest),
       planner.text,
-      architect.text,
-      developer.text,
+      architect.text || developer.text,
       `Reviewer 검토 상태는 ${formatApprovalStatus(data.reviewerApprovalStatus)}이고 QA 검증 상태는 ${formatQaStatus(data.qaFinalStatus)}입니다.`,
       `최종 권고는 "${recommendation}"입니다.`,
     ].filter(Boolean).slice(0, 5).join(' '),
