@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { formatKstTime } from '@/lib/time';
+import { formatBytes, type WorkRequestAttachment } from '@/lib/work-request/attachments';
 import { useDebugStore, type FullFlowSummaryData } from '@/store/debugStore';
+import { useSimStore } from '@/store/simulationStore';
+import type { RequestAnalysisMode } from '@/lib/agents/requestMode';
+import type { NotifyChannel, NotifyStatusResponse } from '@/lib/notify/types';
 
 const DEFAULT_NEXT_ACTIONS = [
   '담당자별 후속 작업 확인',
@@ -10,7 +14,7 @@ const DEFAULT_NEXT_ACTIONS = [
   'QA 체크리스트 기준 최종 확인',
 ];
 
-const REPORT_HISTORY_KEY = 'ai-agent-office:report-history:v3';
+const REPORT_HISTORY_KEY = 'ai-agent-office:report-history:v4';
 const REPORT_HISTORY_EVENT = 'ai-agent-office:report-history-updated';
 const MAX_REPORT_HISTORY = 5;
 const PARSE_WARNING = '해당 Agent 결과 일부를 정리하지 못했습니다. Summary 기준으로 요약합니다.';
@@ -55,6 +59,7 @@ const JSON_KEY_PATTERN = new RegExp(
   'i',
 );
 const RAW_KEY_NAME_PATTERN = new RegExp(`\\b(?:${ARRAY_KEYS.join('|')})\\b`, 'i');
+const INTERNAL_TECH_PATTERN = /\b(?:Next\.js|Nextjs|Supabase|API route|src\/components|src\/lib|npm run lint|npm run build|mock workflow|DB migration)\b/gi;
 
 const KNOWN_JSON_KEYS = new Set([
   ...SUMMARY_KEYS,
@@ -68,14 +73,24 @@ interface ReportBlock {
 }
 
 interface FinalReport {
+  mode: RequestAnalysisMode;
   title: string;
   originalRequest: string;
+  attachments: WorkRequestAttachment[];
   executiveSummary: ReportBlock;
   planner: ReportBlock;
   architect: ReportBlock;
   developer: ReportBlock;
   reviewer: ReportBlock;
   qa: ReportBlock;
+  businessSections?: {
+    coreIdea: ReportBlock;
+    revenueModel: ReportBlock;
+    customerAcquisition: ReportBlock;
+    risks: ReportBlock;
+    operationsAutomation: ReportBlock;
+    pilotChecklist: ReportBlock;
+  };
   finalRecommendation: string;
   nextActions: string[];
   totalInputTokens: number;
@@ -217,6 +232,26 @@ function sanitizeReportText(value: string): string {
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([,.!?。])/g, '$1')
     .trim();
+}
+
+function sanitizeBusinessText(value: string): string {
+  return sanitizeReportText(value)
+    .replace(INTERNAL_TECH_PATTERN, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([,.!?。])/g, '$1')
+    .trim();
+}
+
+function sanitizeBusinessBlock(block: ReportBlock, fallback: string): ReportBlock {
+  const text = sanitizeBusinessText(block.text) || fallback;
+  const bullets = block.bullets
+    .map(sanitizeBusinessText)
+    .filter(Boolean);
+
+  return {
+    text,
+    bullets: Array.from(new Set(bullets)).slice(0, 10),
+  };
 }
 
 function humanizeString(value: string, fallback = '요약 문장이 없습니다.', depth = 0): string {
@@ -382,6 +417,54 @@ function buildNextActions(data: FullFlowSummaryData): string[] {
   return actions.length > 0 ? actions : DEFAULT_NEXT_ACTIONS;
 }
 
+function filterBusinessItems(items: string[], keywords: string[]): string[] {
+  const normalizedKeywords = keywords.map(keyword => keyword.toLowerCase());
+  return items.filter(item => {
+    const normalized = item.toLowerCase();
+    return normalizedKeywords.some(keyword => normalized.includes(keyword));
+  });
+}
+
+function buildBusinessRequestSignals(request: string | null) {
+  const normalized = request?.toLowerCase() ?? '';
+
+  return {
+    coreIdea: [
+      /ai\s*dsp|dsp/.test(normalized)
+        ? 'AI DSP 플랫폼 방향성은 B2B 고객의 광고 운영 효율과 성과 검증을 중심으로 정리합니다.'
+        : null,
+    ],
+    revenue: [
+      /구독|subscription/.test(normalized)
+        ? '구독료 모델은 반복 매출과 고객 유지 가능성을 검증하는 축으로 봅니다.'
+        : null,
+      /프로레타|pro-rata|pro rata/.test(normalized)
+        ? '프로레타 모델은 사용량 또는 성과 기여도에 맞춘 과금 구조로 검토합니다.'
+        : null,
+    ],
+    customer: [
+      /b2b/.test(normalized)
+        ? 'B2B 초기 고객 확보는 명확한 문제를 가진 소규모 고객군 파일럿부터 시작합니다.'
+        : null,
+    ],
+    risk: [
+      /광고비|cac/.test(normalized)
+        ? '광고비와 CAC가 초기 매출보다 빠르게 커지는 리스크를 별도로 관리해야 합니다.'
+        : null,
+    ],
+    operations: [
+      /spotify/.test(normalized)
+        ? 'Spotify API 활용 가능성은 데이터 확보, 타깃팅 인사이트, 성과 측정 관점에서 파일럿 범위로 검토합니다.'
+        : null,
+    ],
+    pilot: [
+      /파일럿|pilot/.test(normalized)
+        ? '초기 파일럿은 고객 반응, 지불 의사, 성과 지표를 짧은 주기로 검증합니다.'
+        : null,
+    ],
+  };
+}
+
 function formatApprovalStatus(status: FullFlowSummaryData['reviewerApprovalStatus']): string {
   if (status === 'approved') return '승인';
   if (status === 'changes_requested') return '수정 요청';
@@ -425,8 +508,103 @@ function buildExecutiveSummary(
   };
 }
 
+function buildBusinessSections(data: FullFlowSummaryData) {
+  const requestSignals = buildBusinessRequestSignals(data.originalRequest);
+  const plannerItems = cleanList([
+    ...requestSignals.coreIdea,
+    ...(data.plannerReport?.steps ?? []),
+    ...(data.plannerReport?.risks ?? []),
+  ]);
+  const architectItems = cleanList([
+    ...(data.architectReport?.architectureNotes ?? []),
+    ...(data.architectReport?.dataFlow ?? []),
+    ...(data.architectReport?.risks ?? []),
+  ]);
+  const developerItems = cleanList([
+    ...requestSignals.operations,
+    ...(data.developerReport?.implementationPlan ?? []),
+    ...(data.developerReport?.filesToChange ?? []),
+    ...(data.developerReport?.testPlan ?? []),
+    ...(data.developerReport?.risks ?? []),
+  ]);
+  const reviewerItems = cleanList([
+    ...(data.reviewerReport?.reviewFindings ?? []),
+    ...(data.reviewerReport?.suggestedChanges ?? []),
+    ...(data.reviewerReport?.risks ?? []),
+  ]);
+  const qaItems = cleanList([
+    ...requestSignals.pilot,
+    ...(data.qaReport?.testCases ?? []),
+    ...(data.qaReport?.regressionChecks ?? []),
+    ...(data.qaReport?.qualityRisks ?? []),
+  ]);
+
+  const revenueItems = filterBusinessItems(
+    cleanList([...requestSignals.revenue, ...plannerItems, ...developerItems, ...reviewerItems]),
+    ['수익', '가격', '구독', '과금', '프로레타', 'pro-rata', 'pro rata', '매출', '비용', 'cac'],
+  );
+  const customerItems = filterBusinessItems(
+    cleanList([...requestSignals.customer, ...plannerItems, ...architectItems, ...reviewerItems, ...qaItems]),
+    ['고객', 'b2b', '영업', '확보', '채널', '파일럿', '광고', 'cac', '시장', '파트너'],
+  );
+  const riskItems = cleanList([
+    ...requestSignals.risk,
+    ...(data.plannerReport?.risks ?? []),
+    ...(data.reviewerReport?.risks ?? []),
+    ...(data.qaReport?.qualityRisks ?? []),
+  ]);
+
+  return {
+    coreIdea: sanitizeBusinessBlock(
+      buildStructuredBlock(
+        data.plannerReport?.summary ?? data.plannerSummary,
+        '핵심 아이디어 요약이 없습니다.',
+        [data.plannerReport?.steps ?? []],
+      ),
+      '핵심 아이디어 요약이 없습니다.',
+    ),
+    revenueModel: sanitizeBusinessBlock({
+      text: revenueItems[0] ?? '수익모델은 구독료, 성과 기반 또는 프로레타 구조를 파일럿에서 비교 검토합니다.',
+      bullets: revenueItems.slice(1, 7),
+    }, '수익모델 검토 항목이 없습니다.'),
+    customerAcquisition: sanitizeBusinessBlock({
+      text: customerItems[0] ?? '초기 고객 확보는 B2B 파일럿과 명확한 성과 지표 중심으로 검증합니다.',
+      bullets: customerItems.slice(1, 7),
+    }, '고객 확보 전략 항목이 없습니다.'),
+    risks: sanitizeBusinessBlock({
+      text: riskItems[0] ?? reviewerItems[0] ?? '주요 리스크는 고객 검증, 비용 구조, 운영 책임 범위를 중심으로 관리합니다.',
+      bullets: [...riskItems.slice(1), ...reviewerItems.slice(0, 4)],
+    }, '주요 리스크 항목이 없습니다.'),
+    operationsAutomation: sanitizeBusinessBlock(
+      buildStructuredBlock(
+        data.developerReport?.summary ?? data.developerSummary,
+        '운영/자동화 가능 영역 요약이 없습니다.',
+        [
+          data.developerReport?.implementationPlan ?? [],
+          data.developerReport?.filesToChange ?? [],
+          data.developerReport?.testPlan ?? [],
+        ],
+      ),
+      '운영/자동화 가능 영역 요약이 없습니다.',
+    ),
+    pilotChecklist: sanitizeBusinessBlock(
+      buildStructuredBlock(
+        data.qaReport?.summary ?? data.qaSummary,
+        '파일럿 검증 체크리스트가 없습니다.',
+        [
+          data.qaReport?.testCases ?? [],
+          data.qaReport?.regressionChecks ?? [],
+          data.qaReport?.qualityRisks ?? [],
+        ],
+      ),
+      '파일럿 검증 체크리스트가 없습니다.',
+    ),
+  };
+}
+
 function buildReport(data: FullFlowSummaryData): FinalReport | null {
   if (data.status !== 'completed') return null;
+  const mode = data.analysisMode ?? 'business';
 
   const planner = buildStructuredBlock(
     data.plannerReport?.summary ?? data.plannerSummary,
@@ -474,8 +652,10 @@ function buildReport(data: FullFlowSummaryData): FinalReport | null {
   const totalTokens = data.totalInputTokens + data.totalOutputTokens;
 
   return {
+    mode,
     title: buildTitle(data),
     originalRequest: data.originalRequest?.trim() || '기존 최우선 태스크 기반 Full Flow 실행',
+    attachments: data.attachments ?? [],
     executiveSummary: buildExecutiveSummary(data, planner, architect, developer, finalRecommendation),
     planner,
     architect,
@@ -488,6 +668,7 @@ function buildReport(data: FullFlowSummaryData): FinalReport | null {
       text: qa.text,
       bullets: [...qa.bullets, `QA 최종 상태: ${formatQaStatus(data.qaFinalStatus)}`],
     },
+    businessSections: mode === 'business' ? buildBusinessSections(data) : undefined,
     finalRecommendation,
     nextActions: buildNextActions(data),
     totalInputTokens: data.totalInputTokens,
@@ -506,12 +687,63 @@ function markdownBlock(block: ReportBlock): string[] {
   ];
 }
 
+function markdownAttachments(attachments: WorkRequestAttachment[]): string[] {
+  if (attachments.length === 0) return ['첨부파일 없음'];
+
+  return attachments.flatMap(attachment => [
+    `- ${attachment.name} (${attachment.extension || 'unknown'}, ${formatBytes(attachment.size)}, ${attachment.usedInContext ? '본문 반영' : '파일명만 반영'})`,
+    attachment.preview ? `  - preview: ${attachment.preview.slice(0, 220).replace(/\n/g, ' ')}` : '',
+  ]).filter(Boolean);
+}
+
 function buildMarkdown(report: FinalReport): string {
+  if (report.mode === 'business' && report.businessSections) {
+    return [
+      `# ${report.title}`,
+      '',
+      '## 요청 내용',
+      report.originalRequest,
+      '',
+      '## Attachments',
+      ...markdownAttachments(report.attachments),
+      '',
+      '## Executive Summary',
+      ...markdownBlock(sanitizeBusinessBlock(report.executiveSummary, 'Executive Summary가 없습니다.')),
+      '',
+      '## 핵심 아이디어',
+      ...markdownBlock(report.businessSections.coreIdea),
+      '',
+      '## 수익모델/운영모델 검토',
+      ...markdownBlock(report.businessSections.revenueModel),
+      '',
+      '## 고객 확보 전략',
+      ...markdownBlock(report.businessSections.customerAcquisition),
+      '',
+      '## 주요 리스크',
+      ...markdownBlock(report.businessSections.risks),
+      '',
+      '## 운영/자동화 가능 영역',
+      ...markdownBlock(report.businessSections.operationsAutomation),
+      '',
+      '## 파일럿 검증 체크리스트',
+      ...markdownBlock(report.businessSections.pilotChecklist),
+      '',
+      '## 최종 권장사항',
+      report.finalRecommendation,
+      '',
+      '## 다음 액션',
+      ...report.nextActions.map((action, index) => `${index + 1}. ${sanitizeBusinessText(action)}`),
+    ].join('\n');
+  }
+
   return [
     `# ${report.title}`,
     '',
     '## Original Request',
     report.originalRequest,
+    '',
+    '## Attachments',
+    ...markdownAttachments(report.attachments),
     '',
     '## Executive Summary',
     ...markdownBlock(report.executiveSummary),
@@ -637,10 +869,33 @@ function ReportSection({ title, block }: { title: string; block: ReportBlock }) 
   );
 }
 
+function ReportAttachmentSection({ attachments }: { attachments: WorkRequestAttachment[] }) {
+  if (attachments.length === 0) return null;
+
+  return (
+    <div className="final-report-section final-report-attachments">
+      <span>Attachments</span>
+      <ul>
+        {attachments.map(attachment => (
+          <li key={attachment.id}>
+            <strong>{attachment.name}</strong>
+            {' '}
+            <em>{attachment.extension || 'unknown'} · {formatBytes(attachment.size)} · {attachment.usedInContext ? '본문 반영' : '파일명만 반영'}</em>
+            {attachment.preview && <p>{attachment.preview.slice(0, 240)}</p>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function FinalReportPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
+  const [notifyStatus, setNotifyStatus] = useState<NotifyStatusResponse | null>(null);
+  const [notifyBusy, setNotifyBusy] = useState<NotifyChannel | null>(null);
+  const [notifyMessage, setNotifyMessage] = useState<string | null>(null);
   const data = useDebugStore(s => s.fullFlowData);
   const report = useMemo(() => data ? buildReport(data) : null, [data]);
   const markdown = useMemo(() => report ? buildMarkdown(report) : '', [report]);
@@ -665,6 +920,93 @@ export default function FinalReportPanel() {
       .slice(0, MAX_REPORT_HISTORY);
     writeReportHistory(next);
   }, [report, markdown]);
+
+  useEffect(() => {
+    let active = true;
+
+    fetch('/api/notify')
+      .then(response => response.json())
+      .then((result: NotifyStatusResponse) => {
+        if (active) setNotifyStatus(result);
+      })
+      .catch(() => {
+        if (active) setNotifyStatus(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function logSecretary(message: string) {
+    const store = useSimStore.getState();
+    const secretary = store.agents.secretary;
+    store.addEvent({
+      agentId: 'secretary',
+      agentName: secretary.name,
+      agentColor: secretary.primaryColor,
+      type: 'system',
+      message,
+    });
+  }
+
+  function notifyButtonLabel(channel: NotifyChannel): string {
+    const state = notifyStatus?.channels[channel];
+    if (!state) return channel === 'slack' ? 'Slack status...' : 'Telegram status...';
+    if (state.status === 'ready') return channel === 'slack' ? 'Send to Slack' : 'Send to Telegram';
+    if (state.status === 'disabled') return `${channel === 'slack' ? 'Slack' : 'Telegram'} disabled`;
+    return `${channel === 'slack' ? 'Slack' : 'Telegram'} not configured`;
+  }
+
+  function isNotifyDisabled(channel: NotifyChannel): boolean {
+    return !displayReport || notifyBusy !== null || notifyStatus?.channels[channel]?.status !== 'ready';
+  }
+
+  async function sendNotification(channel: NotifyChannel) {
+    if (!displayReport || isNotifyDisabled(channel)) return;
+
+    const label = channel === 'slack' ? 'Slack' : 'Telegram';
+    setNotifyBusy(channel);
+    setNotifyMessage(null);
+    logSecretary(`[Secretary] ${label} 알림 전송 준비`);
+    useSimStore.getState().setStatus('secretary', 'thinking');
+    useSimStore.getState().setSpeech('secretary', `${label} 알림 준비 중...`);
+
+    try {
+      const response = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel,
+          title: displayReport.title,
+          summary: displayReport.executiveSummary.text,
+          reportMarkdown: displayMarkdown,
+          nextActions: displayReport.nextActions,
+        }),
+      });
+      const result = await response.json() as { ok?: boolean; message?: string };
+      if (!result.ok) {
+        const message = result.message ?? `${label} 전송 실패`;
+        setNotifyMessage(message);
+        logSecretary(`[Secretary] 전송 실패: ${message}`);
+        useSimStore.getState().setSpeech('secretary', `전송 실패: ${message}`.slice(0, 72));
+        return;
+      }
+
+      setNotifyMessage(result.message ?? `${label} notification sent.`);
+      logSecretary(`[Secretary] ${label} 전송 완료`);
+      useSimStore.getState().setSpeech('secretary', `${label} 전송 완료`);
+      useSimStore.getState().bumpCompleted('secretary');
+    } catch {
+      setNotifyMessage(`${label} network error.`);
+      logSecretary('[Secretary] 전송 실패: network_error');
+      useSimStore.getState().setSpeech('secretary', '전송 실패: network_error');
+    } finally {
+      setNotifyBusy(null);
+      useSimStore.getState().setStatus('secretary', 'idle');
+      useSimStore.getState().setTask('secretary', null);
+    }
+  }
 
   async function copyReport() {
     if (!displayReport) return;
@@ -708,6 +1050,24 @@ export default function FinalReportPanel() {
           <strong>{displayReport ? 'READY' : 'WAITING'}</strong>
         </button>
         <div className="final-report-header-actions">
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={() => { void sendNotification('slack'); }}
+            disabled={isNotifyDisabled('slack')}
+            title={notifyStatus?.channels.slack.status ?? 'checking'}
+          >
+            {notifyBusy === 'slack' ? 'Sending...' : notifyButtonLabel('slack')}
+          </button>
+          <button
+            className="trace-refresh-btn"
+            type="button"
+            onClick={() => { void sendNotification('telegram'); }}
+            disabled={isNotifyDisabled('telegram')}
+            title={notifyStatus?.channels.telegram.status ?? 'checking'}
+          >
+            {notifyBusy === 'telegram' ? 'Sending...' : notifyButtonLabel('telegram')}
+          </button>
           <button
             className="trace-refresh-btn"
             type="button"
@@ -759,22 +1119,54 @@ export default function FinalReportPanel() {
               </div>
 
               <div className="final-report-section">
-                <span>Original Request</span>
+                <span>{displayReport.mode === 'business' ? '요청 내용' : 'Original Request'}</span>
                 <p>{displayReport.originalRequest}</p>
               </div>
-              <ReportSection title="Executive Summary" block={displayReport.executiveSummary} />
-              <ReportSection title="Planner 분석 요약" block={displayReport.planner} />
-              <ReportSection title="Architect 구조/운영 검토 요약" block={displayReport.architect} />
-              <ReportSection title="Developer 실행/구현 계획 요약" block={displayReport.developer} />
-              <ReportSection title="Reviewer 검토 의견" block={displayReport.reviewer} />
-              <ReportSection title="QA 검증 결과" block={displayReport.qa} />
+
+              <ReportAttachmentSection attachments={displayReport.attachments} />
+
+              {(notifyMessage || displayReport) && (
+                <div className="final-report-integrations">
+                  <span>Secretary / Integrations</span>
+                  <div>
+                    <button type="button" disabled>Save to Google Drive · Coming soon</button>
+                    <button type="button" disabled>Send via Gmail · Coming soon</button>
+                    <button type="button" disabled>Export to Google Sheets · Coming soon</button>
+                  </div>
+                  {notifyMessage && <p>{notifyMessage}</p>}
+                </div>
+              )}
+
+              {displayReport.mode === 'business' && displayReport.businessSections ? (
+                <>
+                  <ReportSection
+                    title="Executive Summary"
+                    block={sanitizeBusinessBlock(displayReport.executiveSummary, 'Executive Summary가 없습니다.')}
+                  />
+                  <ReportSection title="핵심 아이디어" block={displayReport.businessSections.coreIdea} />
+                  <ReportSection title="수익모델/운영모델 검토" block={displayReport.businessSections.revenueModel} />
+                  <ReportSection title="고객 확보 전략" block={displayReport.businessSections.customerAcquisition} />
+                  <ReportSection title="주요 리스크" block={displayReport.businessSections.risks} />
+                  <ReportSection title="운영/자동화 가능 영역" block={displayReport.businessSections.operationsAutomation} />
+                  <ReportSection title="파일럿 검증 체크리스트" block={displayReport.businessSections.pilotChecklist} />
+                </>
+              ) : (
+                <>
+                  <ReportSection title="Executive Summary" block={displayReport.executiveSummary} />
+                  <ReportSection title="Planner 분석 요약" block={displayReport.planner} />
+                  <ReportSection title="Architect 구조/운영 검토 요약" block={displayReport.architect} />
+                  <ReportSection title="Developer 실행/구현 계획 요약" block={displayReport.developer} />
+                  <ReportSection title="Reviewer 검토 의견" block={displayReport.reviewer} />
+                  <ReportSection title="QA 검증 결과" block={displayReport.qa} />
+                </>
+              )}
 
               <div className="final-report-recommendation">
-                <span>Final Recommendation</span>
+                <span>{displayReport.mode === 'business' ? '최종 권장사항' : 'Final Recommendation'}</span>
                 <strong>{displayReport.finalRecommendation}</strong>
               </div>
 
-              {displayReport.mockFallbackAgents.length > 0 && (
+              {displayReport.mode === 'software' && displayReport.mockFallbackAgents.length > 0 && (
                 <div className="final-report-warning">
                   <span>Mock fallback</span>
                   <strong>{displayReport.mockFallbackAgents.join(' / ')}</strong>
@@ -782,21 +1174,23 @@ export default function FinalReportPanel() {
               )}
 
               <div className="final-report-actions">
-                <span>Next Actions</span>
+                <span>{displayReport.mode === 'business' ? '다음 액션' : 'Next Actions'}</span>
                 <ol>
                   {displayReport.nextActions.map(action => (
-                    <li key={action}>{action}</li>
+                    <li key={action}>{displayReport.mode === 'business' ? sanitizeBusinessText(action) : action}</li>
                   ))}
                 </ol>
               </div>
 
-              <div className="final-report-ops">
-                <span>tokens {displayReport.totalTokens}</span>
-                <span>input {displayReport.totalInputTokens}</span>
-                <span>output {displayReport.totalOutputTokens}</span>
-                <span>latency {displayReport.totalLatencyMs}ms</span>
-                {displayReport.completedAt && <span>{formatKstTime(displayReport.completedAt)} KST</span>}
-              </div>
+              {displayReport.mode === 'software' && (
+                <div className="final-report-ops">
+                  <span>tokens {displayReport.totalTokens}</span>
+                  <span>input {displayReport.totalInputTokens}</span>
+                  <span>output {displayReport.totalOutputTokens}</span>
+                  <span>latency {displayReport.totalLatencyMs}ms</span>
+                  {displayReport.completedAt && <span>{formatKstTime(displayReport.completedAt)} KST</span>}
+                </div>
+              )}
             </>
           )}
 

@@ -1,4 +1,9 @@
 import { getAgentRolePrompt } from '@/lib/agents/prompts';
+import {
+  describeRequestAnalysisMode,
+  normalizeRequestAnalysisMode,
+  type RequestAnalysisMode,
+} from '@/lib/agents/requestMode';
 import { claudeClient } from '@/lib/llm/claudeClient';
 import { parseLlmJsonObject } from '@/lib/llm/json';
 import { mockClaude } from '@/lib/llm/mockClaude';
@@ -14,6 +19,8 @@ interface ArchitectRequestBody {
   taskDescription?: unknown;
   sessionId?: unknown;
   session_id?: unknown;
+  analysisMode?: unknown;
+  mode?: unknown;
 }
 
 const ROLE = 'architect' as const;
@@ -47,20 +54,38 @@ function arrayOfStrings(value: unknown, fallback: string[], maxItems = 4): strin
 
 function safeArchitectResponse(
   patch: Partial<ArchitectAgentResponse> = {},
+  analysisMode: RequestAnalysisMode = 'business',
 ): ArchitectAgentResponse {
+  const defaults = analysisMode === 'software'
+    ? {
+      summary: 'Architect가 mock 모드에서 시스템 구조를 점검했습니다.',
+      architectureNotes: [
+        'UI, API route, Supabase persistence 경계를 분리해 유지합니다.',
+        'Planner 외 에이전트는 아직 mock workflow를 유지합니다.',
+      ],
+      dataFlow: [
+        'Task Queue → server route → Claude/mock response → Event Log/Supabase traces',
+      ],
+      risks: ['환경변수 또는 RLS 설정이 맞지 않으면 trace 조회가 실패할 수 있습니다.'],
+    }
+    : {
+      summary: 'Architect가 사업/운영 구조와 고객 흐름을 정리했습니다.',
+      architectureNotes: [
+        '초기 고객군, 제공 가치, 운영 책임 범위를 작게 정의합니다.',
+        '파일럿 운영 후 확장 가능한 파트너십과 자동화 구조를 설계합니다.',
+      ],
+      dataFlow: [
+        '고객 문제 접수 → 가치 제안 검증 → 파일럿 운영 → 성과 측정 → 유료 전환',
+      ],
+      risks: ['초기 운영 체계와 고객 데이터 활용 범위가 불명확하면 확장성이 낮아질 수 있습니다.'],
+    };
+
   return {
     ok: true,
     provider: 'mock',
     role: ROLE,
-    summary: 'Architect가 mock 모드에서 시스템 구조를 점검했습니다.',
-    architectureNotes: [
-      'UI, API route, Supabase persistence 경계를 분리해 유지합니다.',
-      'Planner 외 에이전트는 아직 mock workflow를 유지합니다.',
-    ],
-    dataFlow: [
-      'Task Queue → server route → Claude/mock response → Event Log/Supabase traces',
-    ],
-    risks: ['환경변수 또는 RLS 설정이 맞지 않으면 trace 조회가 실패할 수 있습니다.'],
+    analysisMode,
+    ...defaults,
     nextAgent: 'developer',
     ...patch,
   };
@@ -99,14 +124,19 @@ function withArchitectTelemetry(
   };
 }
 
-function parseArchitectContent(llm: LlmResponse): {
+function parseArchitectContent(
+  llm: LlmResponse,
+  analysisMode: RequestAnalysisMode,
+): {
   response: ArchitectAgentResponse;
   debugReason?: string;
 } {
   const fallback = safeArchitectResponse({
     provider: llm.provider,
-    summary: normalizeText(llm.content, 'Architect 응답을 JSON으로 파싱하지 못했습니다.'),
-  });
+    summary: analysisMode === 'business'
+      ? 'Architect 응답 일부를 구조화하지 못해 운영 구조 기준으로 요약합니다.'
+      : normalizeText(llm.content, 'Architect 응답을 JSON으로 파싱하지 못했습니다.'),
+  }, analysisMode);
 
   try {
     const parsed = parseLlmJsonObject(llm.content);
@@ -124,7 +154,7 @@ function parseArchitectContent(llm: LlmResponse): {
         dataFlow: arrayOfStrings(parsed.dataFlow, fallback.dataFlow),
         risks: arrayOfStrings(parsed.risks, [], 3),
         nextAgent: normalizeNextAgent(parsed.nextAgent),
-      }),
+      }, analysisMode),
     };
   } catch {
     return {
@@ -134,9 +164,13 @@ function parseArchitectContent(llm: LlmResponse): {
   }
 }
 
-function buildArchitectSystemPrompt(basePrompt: string): string {
+function buildArchitectSystemPrompt(basePrompt: string, analysisMode: RequestAnalysisMode): string {
   return [
     basePrompt,
+    `Analysis mode: ${describeRequestAnalysisMode(analysisMode)}.`,
+    analysisMode === 'business'
+      ? 'For business mode, architectureNotes must describe business/operating structure, customer flow, data or information flow, operating model, and scale path. Do not mention software frameworks or repository files.'
+      : 'For software mode, architectureNotes may describe system structure, data flow, API/DB boundaries, and implementation risks.',
     'You must return raw JSON only.',
     'Do not use markdown.',
     'Do not wrap the response in ```json fences.',
@@ -145,16 +179,19 @@ function buildArchitectSystemPrompt(basePrompt: string): string {
     'Use exactly this JSON object shape:',
     '{"summary":"string","architectureNotes":["string"],"dataFlow":["string"],"risks":["string"],"nextAgent":"developer"}',
     'nextAgent must be exactly one of: developer, reviewer, qa.',
-    'Keep each array item concise and implementation-oriented.',
+    analysisMode === 'business'
+      ? 'Keep each array item concise and business/operations-oriented.'
+      : 'Keep each array item concise and implementation-oriented.',
   ].join('\n');
 }
 
 function respondWithArchitectContent(
   llm: LlmResponse,
+  analysisMode: RequestAnalysisMode,
   traceRecorded?: boolean,
   latencyMs: number | null = null,
 ) {
-  const parsed = parseArchitectContent(llm);
+  const parsed = parseArchitectContent(llm, analysisMode);
   return Response.json(withDevDebug(
     withArchitectTelemetry(parsed.response, llm, traceRecorded, latencyMs),
     parsed.debugReason ?? llm.fallbackReason,
@@ -193,6 +230,7 @@ async function recordArchitectLlmTrace(
 async function buildMockResponse(
   taskTitle: string,
   taskDescription: string,
+  analysisMode: RequestAnalysisMode,
 ): Promise<ArchitectAgentResponse> {
   const mock = await mockClaude.complete({
     agentRole: ROLE,
@@ -206,14 +244,14 @@ async function buildMockResponse(
   });
 
   return safeArchitectResponse({
-    summary: mock.content,
+    ...(analysisMode === 'software' ? { summary: mock.content } : {}),
     provider: 'mock',
     traceRecorded: false,
     model: mock.model,
     latencyMs: mock.latencyMs,
     inputTokens: mock.inputTokens,
     outputTokens: mock.outputTokens,
-  });
+  }, analysisMode);
 }
 
 export async function POST(request: Request) {
@@ -238,6 +276,11 @@ export async function POST(request: Request) {
     1400,
   );
   const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
+  const analysisMode = normalizeRequestAnalysisMode(
+    body.analysisMode ?? body.mode,
+    taskTitle,
+    taskDescription,
+  );
 
   const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
   const liveEnabled = normalizedLiveFlag === 'true';
@@ -245,7 +288,7 @@ export async function POST(request: Request) {
 
   if (!liveEnabled) {
     return Response.json(withDevDebug(
-      await buildMockResponse(taskTitle, taskDescription),
+      await buildMockResponse(taskTitle, taskDescription, analysisMode),
       `live_disabled:${normalizedLiveFlag ?? 'missing'}`,
       false,
     ));
@@ -253,26 +296,29 @@ export async function POST(request: Request) {
 
   if (!hasApiKey) {
     return Response.json(withDevDebug(
-      await buildMockResponse(taskTitle, taskDescription),
+      await buildMockResponse(taskTitle, taskDescription, analysisMode),
       'missing_api_key',
       false,
     ));
   }
 
-  const architectPrompt = getAgentRolePrompt(ROLE);
+  const architectPrompt = getAgentRolePrompt(ROLE, analysisMode);
   const claudeStartedAt = Date.now();
   const llm = await claudeClient.complete({
     agentRole: ROLE,
     model: getModelForRole(ROLE),
-    systemPrompt: buildArchitectSystemPrompt(architectPrompt.systemPrompt),
+    systemPrompt: buildArchitectSystemPrompt(architectPrompt.systemPrompt, analysisMode),
     messages: [
       {
         role: 'user',
         content: [
+          `Analysis mode: ${describeRequestAnalysisMode(analysisMode)}`,
           `Task title: ${taskTitle}`,
           `Task description: ${taskDescription}`,
           'Create a concise architecture review for this task.',
-          'Include system structure notes, data flow, API/DB boundary concerns, implementation risks, and next agent recommendation.',
+          analysisMode === 'business'
+            ? 'Include business/operating structure notes, customer flow, information flow, operating risks, and next agent recommendation.'
+            : 'Include system structure notes, data flow, API/DB boundary concerns, implementation risks, and next agent recommendation.',
           'Return only the JSON object. No markdown. No code fences.',
         ].join('\n'),
       },
@@ -283,5 +329,5 @@ export async function POST(request: Request) {
 
   const traceRecorded = await recordArchitectLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
 
-  return respondWithArchitectContent(llm, traceRecorded, claudeLatencyMs);
+  return respondWithArchitectContent(llm, analysisMode, traceRecorded, claudeLatencyMs);
 }

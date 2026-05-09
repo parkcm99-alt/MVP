@@ -1,15 +1,28 @@
 'use client';
 
-import { type MutableRefObject, useEffect, useRef, useState } from 'react';
+import { type ChangeEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { assignPlannerStep } from '@/lib/agents/plannerStepAssignment';
+import { classifyWorkRequest, type RequestAnalysisMode } from '@/lib/agents/requestMode';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
 import { getSessionId } from '@/lib/supabase/session';
 import { insertAgentTrace } from '@/lib/supabase/traces';
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENT_COUNT,
+  MAX_TEXT_ATTACHMENT_BYTES,
+  buildAttachmentContext,
+  formatBytes,
+  getFileExtension,
+  isPassiveAttachment,
+  isTextAttachment,
+  summarizeAttachmentPreview,
+  type WorkRequestAttachment,
+} from '@/lib/work-request/attachments';
 import { useDebugStore } from '@/store/debugStore';
-import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
+import type { AgentRole, AgentStatus, EventType, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type {
   ArchitectAgentResponse,
   DeveloperAgentResponse,
@@ -65,6 +78,7 @@ const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
   developer: 'coding',
   reviewer: 'reviewing',
   qa: 'testing',
+  secretary: 'thinking',
 };
 
 const AGENT_LABELS: Record<AgentRole, string> = {
@@ -73,6 +87,7 @@ const AGENT_LABELS: Record<AgentRole, string> = {
   developer: 'Developer',
   reviewer: 'Reviewer',
   qa: 'QA',
+  secretary: 'Secretary',
 };
 
 const WORK_REQUEST_TEMPLATES = [
@@ -101,6 +116,59 @@ const WORK_REQUEST_TEMPLATES = [
     prompt: '정산 내역을 검토하기 위한 확인 항목, 예외 케이스, 담당자별 후속 작업, 최종 검증 체크리스트를 정리해줘.',
   },
 ];
+
+function createAttachmentId(file: File, index: number): string {
+  return `${file.name}-${file.size}-${file.lastModified}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function buildAttachment(file: File, index: number): Promise<WorkRequestAttachment> {
+  const extension = getFileExtension(file.name);
+  const base = {
+    id: createAttachmentId(file, index),
+    name: file.name,
+    size: file.size,
+    type: file.type || extension || 'unknown',
+    extension,
+  };
+
+  if (isTextAttachment(extension)) {
+    if (file.size > MAX_TEXT_ATTACHMENT_BYTES) {
+      return {
+        ...base,
+        textExtracted: false,
+        usedInContext: false,
+        preview: null,
+        warning: `텍스트 추출 제한 초과 (${formatBytes(MAX_TEXT_ATTACHMENT_BYTES)} 이하 권장)`,
+      };
+    }
+
+    const text = await file.text();
+    return {
+      ...base,
+      textExtracted: true,
+      usedInContext: true,
+      preview: summarizeAttachmentPreview(text),
+    };
+  }
+
+  if (isPassiveAttachment(extension)) {
+    return {
+      ...base,
+      textExtracted: false,
+      usedInContext: false,
+      preview: null,
+      warning: '현재는 파일명만 첨부됩니다. 본문 추출은 추후 지원 예정입니다.',
+    };
+  }
+
+  return {
+    ...base,
+    textExtracted: false,
+    usedInContext: false,
+    preview: null,
+    warning: '지원하지 않는 파일 형식입니다.',
+  };
+}
 
 function pickHighestPriorityTask(tasks: SimTask[]): SimTask | undefined {
   return tasks
@@ -283,9 +351,9 @@ type FlowAgentResponse =
   | ReviewerAgentResponse
   | QaAgentResponse;
 
-function buildContext(summary: string, lines: string[]): string {
+function buildContext(summary: string, lines: string[], originalRequest?: string): string {
   const body = lines.slice(0, 5).join(' | ');
-  return `이전 단계 요약: ${summary}${body ? ` | 세부: ${body}` : ''}`.slice(0, 700);
+  return `${originalRequest ? `원 요청: ${originalRequest} | ` : ''}이전 단계 요약: ${summary}${body ? ` | 세부: ${body}` : ''}`.slice(0, 1100);
 }
 
 function getFailureReason(error: unknown): string {
@@ -321,6 +389,8 @@ export default function ActionBar() {
   const [cooldownActive, setCooldownActive] = useState(false);
   const [plannerCooldown, setPlannerCooldown] = useState(false);
   const [workRequest, setWorkRequest] = useState('');
+  const [attachments, setAttachments] = useState<WorkRequestAttachment[]>([]);
+  const [attachmentWarning, setAttachmentWarning] = useState<string | null>(null);
   const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const setLastFlowSummary = useDebugStore(s => s.setLastFlowSummary);
@@ -353,6 +423,44 @@ export default function ActionBar() {
     });
   }
 
+  function secretaryLog(msg: string, type: EventType = 'system') {
+    const secretary = useSimStore.getState().agents.secretary;
+    useSimStore.getState().addEvent({
+      agentId: 'secretary',
+      agentName: secretary.name,
+      agentColor: secretary.primaryColor,
+      type,
+      message: msg,
+    });
+  }
+
+  async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = '';
+    if (files.length === 0) return;
+
+    const availableSlots = Math.max(0, MAX_ATTACHMENT_COUNT - attachments.length);
+    const selected = files.slice(0, availableSlots);
+    if (files.length > availableSlots) {
+      setAttachmentWarning(`첨부파일은 최대 ${MAX_ATTACHMENT_COUNT}개까지 추가할 수 있습니다.`);
+    } else {
+      setAttachmentWarning(null);
+    }
+
+    const next = await Promise.all(selected.map(buildAttachment));
+    setAttachments(current => [...current, ...next].slice(0, MAX_ATTACHMENT_COUNT));
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments(current => current.filter(attachment => attachment.id !== id));
+    setAttachmentWarning(null);
+  }
+
+  function clearAttachments() {
+    setAttachments([]);
+    setAttachmentWarning(null);
+  }
+
   function recordStep(u: FlowDebugUpdate) {
     recordAgentResponse({
       agentId:       u.agentId,
@@ -371,11 +479,19 @@ export default function ActionBar() {
     taskTitle: string,
     taskDescription: string,
     sessionId: string,
+    analysisMode: RequestAnalysisMode,
   ): Promise<T> {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
+      body: JSON.stringify({
+        taskTitle,
+        taskDescription,
+        sessionId,
+        session_id: sessionId,
+        analysisMode,
+        mode: analysisMode,
+      }),
     });
 
     return readFlowResponse<T>(response, agentId);
@@ -390,6 +506,7 @@ export default function ActionBar() {
     const task = pickHighestPriorityTask(useSimStore.getState().tasks);
     const baseTitle = flowData.originalRequest ? 'User Work Request' : (task?.title ?? 'Retry Failed Agent');
     const baseDesc = flowData.originalRequest ?? task?.description ?? '실패한 Agent 단계를 재시도합니다.';
+    const analysisMode = flowData.analysisMode ?? classifyWorkRequest(`${baseTitle}\n${baseDesc}`);
     const sessionId = getSessionId();
     const previousAgent = useSimStore.getState().agents[agentId];
     const previousStatus: AgentStatus = previousAgent.status;
@@ -399,10 +516,10 @@ export default function ActionBar() {
 
     function retryDescription() {
       if (agentId === 'planner') return baseDesc;
-      if (agentId === 'architect') return buildContext(flowData.plannerSummary ?? baseDesc, []);
-      if (agentId === 'developer') return buildContext(flowData.architectSummary ?? flowData.plannerSummary ?? baseDesc, []);
-      if (agentId === 'reviewer') return buildContext(flowData.developerSummary ?? flowData.architectSummary ?? baseDesc, []);
-      return buildContext(flowData.reviewerSummary ?? flowData.developerSummary ?? baseDesc, []);
+      if (agentId === 'architect') return buildContext(flowData.plannerSummary ?? baseDesc, [], baseDesc);
+      if (agentId === 'developer') return buildContext(flowData.architectSummary ?? flowData.plannerSummary ?? baseDesc, [], baseDesc);
+      if (agentId === 'reviewer') return buildContext(flowData.developerSummary ?? flowData.architectSummary ?? baseDesc, [], baseDesc);
+      return buildContext(flowData.reviewerSummary ?? flowData.developerSummary ?? baseDesc, [], baseDesc);
     }
 
     function applyRetryResult(result: FlowAgentResponse) {
@@ -505,11 +622,11 @@ export default function ActionBar() {
     try {
       const description = retryDescription();
       let result: FlowAgentResponse;
-      if (agentId === 'planner') result = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, description, sessionId);
-      else if (agentId === 'architect') result = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, description, sessionId);
-      else if (agentId === 'developer') result = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, description, sessionId);
-      else if (agentId === 'reviewer') result = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, description, sessionId);
-      else result = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, description, sessionId);
+      if (agentId === 'planner') result = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, description, sessionId, analysisMode);
+      else if (agentId === 'architect') result = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, description, sessionId, analysisMode);
+      else if (agentId === 'developer') result = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, description, sessionId, analysisMode);
+      else if (agentId === 'reviewer') result = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, description, sessionId, analysisMode);
+      else result = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, description, sessionId, analysisMode);
 
       applyRetryResult(result);
       useSimStore.getState().setSpeech(agentId, result.summary.slice(0, 72));
@@ -538,10 +655,16 @@ export default function ActionBar() {
     if (plannerBusy || flowBusy || cooldownActive) return;
 
     const hasRequest = workRequest.trim().length > 0;
+    const hasAttachments = attachments.length > 0;
     const trimmedRequest = workRequest.trim();
+    const attachmentContext = buildAttachmentContext(attachments);
     const task = pickHighestPriorityTask(tasks);
-    const baseTitle = hasRequest ? 'User Work Request' : (task?.title ?? 'Full Agent Flow 태스크');
-    const baseDesc  = hasRequest ? trimmedRequest : (task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.');
+    const baseTitle = hasRequest || hasAttachments ? 'User Work Request' : (task?.title ?? 'Full Agent Flow 태스크');
+    const requestBody = hasRequest ? trimmedRequest : (hasAttachments ? '첨부파일 기반 업무 요청입니다.' : '');
+    const baseDesc  = hasRequest || hasAttachments
+      ? [requestBody, attachmentContext ? `\n첨부파일 컨텍스트:\n${attachmentContext}` : ''].filter(Boolean).join('\n')
+      : (task?.description ?? '전체 AI Agent 워크플로우를 실행합니다.');
+    const analysisMode = classifyWorkRequest(`${baseTitle}\n${baseDesc}`);
     const sessionId = getSessionId();
 
     const completedAgents: string[] = [];
@@ -572,7 +695,9 @@ export default function ActionBar() {
         failReason: reason,
         completedAgents: [...completedAgents],
         mockFallbackAgents: [...mockFallbackAgents],
-        originalRequest: hasRequest ? trimmedRequest : null,
+        originalRequest: hasRequest ? trimmedRequest : (hasAttachments ? '첨부파일 기반 업무 요청' : null),
+        attachments,
+        analysisMode,
       });
     }
 
@@ -609,11 +734,16 @@ export default function ActionBar() {
       totalLatencyMs: 0, totalInputTokens: 0, totalOutputTokens: 0,
       completedAt: null, failedAgent: null, failReason: null, completedAgents: [],
       mockFallbackAgents: [],
-      originalRequest: hasRequest ? trimmedRequest : null,
+      originalRequest: hasRequest ? trimmedRequest : (hasAttachments ? '첨부파일 기반 업무 요청' : null),
+      attachments,
+      analysisMode,
     });
-    if (hasRequest) {
+    if (hasRequest || hasAttachments) {
       sysLog('[FLOW] 사용자 요청 기반 Full Flow 시작');
-      sysLog(`[Planner] 사용자 요청 분석 시작: ${trimmedRequest.slice(0, 60)}${trimmedRequest.length > 60 ? '...' : ''}`);
+      sysLog(`[Planner] 사용자 요청 분석 시작: ${(trimmedRequest || '첨부파일 컨텍스트').slice(0, 60)}${trimmedRequest.length > 60 ? '...' : ''}`);
+      if (hasAttachments) {
+        sysLog(`[FLOW] 첨부파일 ${attachments.length}개를 요청 컨텍스트에 포함했습니다`);
+      }
     } else {
       sysLog('[FLOW] Full Agent Flow 시작');
     }
@@ -623,7 +753,7 @@ export default function ActionBar() {
       useSimStore.getState().setSpeech('planner', 'Full Flow 계획 중...');
       let plannerResult: PlannerAgentResponse;
       try {
-        plannerResult = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, baseDesc, sessionId);
+        plannerResult = await callFlowAgent<PlannerAgentResponse>('planner', '/api/agents/planner', baseTitle, baseDesc, sessionId, analysisMode);
       } catch (error) {
         snapshotFail('planner', getFailureReason(error));
         return;
@@ -642,7 +772,7 @@ export default function ActionBar() {
       useSimStore.getState().setSpeech('architect', '설계 검토 중...');
       let architectResult: ArchitectAgentResponse;
       try {
-        architectResult = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, buildContext(plannerSummary, plannerResult.steps ?? []), sessionId);
+        architectResult = await callFlowAgent<ArchitectAgentResponse>('architect', '/api/agents/architect', baseTitle, buildContext(plannerSummary, plannerResult.steps ?? [], baseDesc), sessionId, analysisMode);
       } catch (error) {
         snapshotFail('architect', getFailureReason(error));
         return;
@@ -655,10 +785,10 @@ export default function ActionBar() {
       eventBus.emit('agent.message', { agentId: 'architect', data: { message: architectSummary, taskTitle: baseTitle, provider: architectResult.provider } });
 
       useSimStore.getState().setStatus('developer', 'coding');
-      useSimStore.getState().setSpeech('developer', '구현 계획 작성 중...');
+      useSimStore.getState().setSpeech('developer', analysisMode === 'business' ? '자동화/MVP 계획 작성 중...' : '구현 계획 작성 중...');
       let developerResult: DeveloperAgentResponse;
       try {
-        developerResult = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, buildContext(architectSummary, architectResult.architectureNotes ?? []), sessionId);
+        developerResult = await callFlowAgent<DeveloperAgentResponse>('developer', '/api/agents/developer', baseTitle, buildContext(architectSummary, architectResult.architectureNotes ?? [], baseDesc), sessionId, analysisMode);
       } catch (error) {
         snapshotFail('developer', getFailureReason(error));
         return;
@@ -671,10 +801,10 @@ export default function ActionBar() {
       eventBus.emit('agent.message', { agentId: 'developer', data: { message: developerSummary, taskTitle: baseTitle, provider: developerResult.provider } });
 
       useSimStore.getState().setStatus('reviewer', 'reviewing');
-      useSimStore.getState().setSpeech('reviewer', '코드 리뷰 중...');
+      useSimStore.getState().setSpeech('reviewer', analysisMode === 'business' ? '사업 리스크 검토 중...' : '코드 리뷰 중...');
       let reviewerResult: ReviewerAgentResponse;
       try {
-        reviewerResult = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, buildContext(developerSummary, developerResult.implementationPlan ?? []), sessionId);
+        reviewerResult = await callFlowAgent<ReviewerAgentResponse>('reviewer', '/api/agents/reviewer', baseTitle, buildContext(developerSummary, developerResult.implementationPlan ?? [], baseDesc), sessionId, analysisMode);
       } catch (error) {
         snapshotFail('reviewer', getFailureReason(error));
         return;
@@ -691,7 +821,7 @@ export default function ActionBar() {
       useSimStore.getState().setSpeech('qa', 'QA 검증 중...');
       let qaResult: QaAgentResponse;
       try {
-        qaResult = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, buildContext(reviewerSummary, reviewerResult.reviewFindings ?? []), sessionId);
+        qaResult = await callFlowAgent<QaAgentResponse>('qa', '/api/agents/qa', baseTitle, buildContext(reviewerSummary, reviewerResult.reviewFindings ?? [], baseDesc), sessionId, analysisMode);
       } catch (error) {
         snapshotFail('qa', getFailureReason(error));
         return;
@@ -704,6 +834,15 @@ export default function ActionBar() {
       useSimStore.getState().setSpeech('qa', qaSummary.slice(0, 72));
       eventBus.emit('agent.message', { agentId: 'qa', data: { message: qaSummary, taskTitle: baseTitle, provider: qaResult.provider } });
 
+      useSimStore.getState().setStatus('secretary', 'thinking');
+      useSimStore.getState().setTask('secretary', 'Final report summary');
+      useSimStore.getState().setSpeech('secretary', '최종 리포트 정리 중...');
+      completedAgents.push(AGENT_LABELS.secretary);
+      secretaryLog('[Secretary] 최종 리포트 정리 완료');
+      secretaryLog('[Secretary] 알림 메시지 준비 완료');
+      useSimStore.getState().setSpeech('secretary', '알림 메시지 준비 완료');
+      useSimStore.getState().bumpCompleted('secretary');
+
       const completedAt = Date.now();
       setFullFlowData({
         status: 'completed',
@@ -715,7 +854,9 @@ export default function ActionBar() {
         failedAgent: null, failReason: null,
         completedAgents: [...completedAgents],
         mockFallbackAgents: [...mockFallbackAgents],
-        originalRequest: hasRequest ? trimmedRequest : null,
+        originalRequest: hasRequest ? trimmedRequest : (hasAttachments ? '첨부파일 기반 업무 요청' : null),
+        attachments,
+        analysisMode,
         plannerReport: {
           summary: plannerResult.summary ?? null,
           steps: plannerResult.steps ?? [],
@@ -756,7 +897,7 @@ export default function ActionBar() {
       sysLog(`[FLOW] 전체 실행 완료 — QA: ${qaFinalStatus} / Reviewer: ${reviewerApprovalStatus} / total tokens: ${totalTokens}`);
       sysLog('[REPORT] 최종 보고서 생성 완료');
     } finally {
-      (['planner', 'architect', 'developer', 'reviewer', 'qa'] as AgentRole[]).forEach(id => {
+      (['planner', 'architect', 'developer', 'reviewer', 'qa', 'secretary'] as AgentRole[]).forEach(id => {
         const store = useSimStore.getState();
         if (store.agents[id].status !== 'idle') {
           store.setStatus(id, 'idle');
@@ -774,6 +915,7 @@ export default function ActionBar() {
     const task = pickHighestPriorityTask(tasks);
     const taskTitle = task?.title ?? '스프린트 계획 점검';
     const taskDescription = task?.description ?? '현재 MVP의 다음 작업을 안전하게 계획합니다.';
+    const analysisMode = classifyWorkRequest(`${taskTitle}\n${taskDescription}`);
     const planningTask = `Planning: ${taskTitle}`;
     const pendingSpeech = '우선순위 태스크 계획 중...';
     const previousPlanner = useSimStore.getState().agents.planner;
@@ -790,7 +932,14 @@ export default function ActionBar() {
       const response = await fetch('/api/agents/planner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
+        body: JSON.stringify({
+          taskTitle,
+          taskDescription,
+          sessionId,
+          session_id: sessionId,
+          analysisMode,
+          mode: analysisMode,
+        }),
       });
       const result = await response.json() as PlannerAgentResponse;
       recordPlannerResponse({
@@ -930,6 +1079,51 @@ export default function ActionBar() {
             </button>
           ))}
         </div>
+        <div className="work-request-attachments">
+          <div className="attachment-controls">
+            <label className={`attachment-upload-btn${flowBusy ? ' attachment-upload-btn--disabled' : ''}`}>
+              + Attach
+              <input
+                type="file"
+                multiple
+                accept={ATTACHMENT_ACCEPT}
+                onChange={handleAttachmentChange}
+                disabled={flowBusy}
+              />
+            </label>
+            <button
+              className="attachment-clear-btn"
+              type="button"
+              onClick={clearAttachments}
+              disabled={flowBusy || attachments.length === 0}
+            >
+              Clear
+            </button>
+          </div>
+          <span className="attachment-limit">txt/md/csv/json · max {formatBytes(MAX_TEXT_ATTACHMENT_BYTES)}</span>
+          {attachmentWarning && <span className="attachment-warning">{attachmentWarning}</span>}
+          {attachments.length > 0 && (
+            <div className="attachment-list">
+              {attachments.map(attachment => (
+                <div className="attachment-item" key={attachment.id}>
+                  <div>
+                    <strong>{attachment.name}</strong>
+                    <span>{formatBytes(attachment.size)} · {attachment.textExtracted ? 'text included' : 'filename only'}</span>
+                    {attachment.warning && <em>{attachment.warning}</em>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(attachment.id)}
+                    disabled={flowBusy}
+                    aria-label={`${attachment.name} 첨부 제거`}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Action buttons row ────────────────────────────────────────── */}
@@ -968,14 +1162,14 @@ export default function ActionBar() {
         <ActionBtn
           variant="flow"
           onClick={() => { void runFullFlow(); }}
-          title={workRequest.trim() ? '입력한 업무 요청 기반으로 전체 플로우 실행' : 'Planner → Architect → Developer → Reviewer → QA 전체 워크플로우 실행 (기본 task 사용)'}
+          title={workRequest.trim() || attachments.length > 0 ? '입력한 업무 요청/첨부 기반으로 전체 플로우 실행' : 'Planner → Architect → Developer → Reviewer → QA → Secretary 전체 워크플로우 실행 (기본 task 사용)'}
           disabled={anyBusy}
         >
           {flowBusy
             ? 'Running Flow...'
             : cooldownActive
               ? '⏳ Wait 5s'
-              : workRequest.trim()
+              : workRequest.trim() || attachments.length > 0
                 ? '⚡ Run Flow from Request'
                 : '⚡ Run Full Flow'}
         </ActionBtn>

@@ -18,6 +18,7 @@ const SYSTEM_PROMPTS: Record<AgentRole, string> = {
   developer: 'You are a senior full-stack engineer. Write clean, tested, production-ready code.',
   reviewer:  'You are a senior code reviewer. Identify bugs, security issues, and style violations.',
   qa:        'You are a QA engineer. Design comprehensive test cases and catch edge cases.',
+  secretary: 'You are an executive assistant. Summarize reports, prepare next actions, and draft notification messages.',
 };
 
 export interface AgentTurnParams {

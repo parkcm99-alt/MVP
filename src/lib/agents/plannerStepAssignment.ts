@@ -12,6 +12,7 @@ const ROLE_LABELS: Record<AgentRole, string> = {
   developer: 'Developer',
   reviewer: 'Reviewer',
   qa: 'QA',
+  secretary: 'Secretary',
 };
 
 const EXPLICIT_ROLE_PATTERNS: Array<[AgentRole, RegExp]> = [
@@ -19,6 +20,7 @@ const EXPLICIT_ROLE_PATTERNS: Array<[AgentRole, RegExp]> = [
   ['developer', /(developer에게|developer to|assign to developer|개발자에게)/i],
   ['reviewer', /(reviewer에게|reviewer to|assign to reviewer|리뷰어에게)/i],
   ['qa', /(qa에게|qa to|assign to qa|테스터에게)/i],
+  ['secretary', /(secretary에게|assistant에게|비서에게|서기에게|assign to secretary)/i],
   ['planner', /(planner에게|planner to|assign to planner|기획자에게)/i],
 ];
 
@@ -27,6 +29,7 @@ const ROLE_KEYWORDS: Array<[AgentRole, RegExp]> = [
   ['developer', /(developer|개발|구현|api|코드|백엔드|프론트엔드|frontend|backend)/i],
   ['reviewer', /(reviewer|리뷰|검토|pr|코드\s*리뷰|code\s*review)/i],
   ['qa', /(\bqa\b|테스트|검증|회귀|품질|test|verification|quality)/i],
+  ['secretary', /(secretary|assistant|비서|서기|리포트\s*정리|알림|공유|후속\s*액션)/i],
   ['planner', /(요구사항|우선순위|기획|스프린트|requirement|priority|planning|sprint)/i],
 ];
 
@@ -35,6 +38,7 @@ const MULTI_ROLE_PATTERNS: Array<[AgentRole, RegExp]> = [
   ['developer', /\bdeveloper\b|개발자|개발/i],
   ['reviewer', /\breviewer\b|리뷰어|리뷰/i],
   ['qa', /\bqa\b|테스터|테스트/i],
+  ['secretary', /\bsecretary\b|\bassistant\b|비서|서기/i],
   ['planner', /\bplanner\b|기획자|기획/i],
 ];
 

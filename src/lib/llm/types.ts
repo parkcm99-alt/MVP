@@ -9,6 +9,7 @@
  */
 
 import type { AgentRole } from '@/types';
+import type { RequestAnalysisMode } from '@/lib/agents/requestMode';
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
@@ -89,6 +90,7 @@ export interface PlannerAgentResponse {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'planner';
+  analysisMode?: RequestAnalysisMode;
   summary: string;
   steps: string[];
   risks: string[];
@@ -105,6 +107,7 @@ export interface ArchitectAgentResponse {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'architect';
+  analysisMode?: RequestAnalysisMode;
   summary: string;
   architectureNotes: string[];
   dataFlow: string[];
@@ -122,6 +125,7 @@ export interface DeveloperAgentResponse {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'developer';
+  analysisMode?: RequestAnalysisMode;
   summary: string;
   implementationPlan: string[];
   filesToChange: string[];
@@ -140,6 +144,7 @@ export interface ReviewerAgentResponse {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'reviewer';
+  analysisMode?: RequestAnalysisMode;
   summary: string;
   reviewFindings: string[];
   suggestedChanges: string[];
@@ -158,6 +163,7 @@ export interface QaAgentResponse {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'qa';
+  analysisMode?: RequestAnalysisMode;
   summary: string;
   testCases: string[];
   regressionChecks: string[];

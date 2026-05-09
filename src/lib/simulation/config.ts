@@ -9,6 +9,7 @@ export const DESK_CENTERS: Record<AgentRole, Position> = {
   architect: { x: 370,  y: 100 },
   developer: { x: 640,  y: 100 },
   reviewer:  { x: 200,  y: 370 },
+  secretary: { x: 410,  y: 370 },
   qa:        { x: 620,  y: 370 },
 };
 
@@ -18,6 +19,7 @@ export const DESK_STAND: Record<AgentRole, Position> = {
   architect: { x: 354,  y: 136 },
   developer: { x: 624,  y: 136 },
   reviewer:  { x: 184,  y: 406 },
+  secretary: { x: 394,  y: 406 },
   qa:        { x: 604,  y: 406 },
 };
 
@@ -31,6 +33,7 @@ export const MEETING_SEATS: Position[] = [
   { x: 460, y: 162 },  // top-far
   { x: 256, y: 222 },  // left
   { x: 540, y: 222 },  // right
+  { x: 420, y: 292 },  // bottom-center
 ];
 
 export const AGENTS_INIT = [
@@ -83,5 +86,15 @@ export const AGENTS_INIT = [
     spriteColor: '#EF4444',
     pantColor: '#7F1D1D',
     deskPosition: DESK_STAND.qa,
+  },
+  {
+    id: 'secretary' as AgentRole,
+    name: 'Secretary',
+    role: 'secretary' as AgentRole,
+    emoji: '📝',
+    primaryColor: '#FACC15',
+    spriteColor: '#EAB308',
+    pantColor: '#713F12',
+    deskPosition: DESK_STAND.secretary,
   },
 ] as const;

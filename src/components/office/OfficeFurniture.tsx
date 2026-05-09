@@ -8,6 +8,7 @@ const DESK_LABELS: Record<AgentRole, string> = {
   architect: 'ARCHITECT',
   developer: 'DEVELOPER',
   reviewer:  'REVIEWER',
+  secretary: 'SECRETARY',
   qa:        'QA',
 };
 
@@ -16,6 +17,7 @@ const DESK_SCREEN_COLORS: Record<AgentRole, string> = {
   architect: '#10B981',
   developer: '#F97316',
   reviewer:  '#A855F7',
+  secretary: '#EAB308',
   qa:        '#EF4444',
 };
 

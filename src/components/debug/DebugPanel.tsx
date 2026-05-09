@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
+import type { GoogleIntegrationStatus } from '@/lib/google/types';
 
 const SUPABASE_META: Record<SupabaseDebugStatus, { label: string; color: string }> = {
   mock:       { label: 'mock', color: '#64748B' },
@@ -36,9 +37,27 @@ function getTraceClass(value: boolean | null): string {
 
 export default function DebugPanel() {
   const [collapsed, setCollapsed] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState<GoogleIntegrationStatus | null>(null);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const lastLlm = useDebugStore(s => s.lastLlm);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
+
+  useEffect(() => {
+    let active = true;
+
+    fetch('/api/google/status')
+      .then(response => response.json())
+      .then((result: GoogleIntegrationStatus) => {
+        if (active) setGoogleStatus(result);
+      })
+      .catch(() => {
+        if (active) setGoogleStatus(null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
@@ -92,6 +111,28 @@ export default function DebugPanel() {
             <div>
               <span>output_tokens</span>
               <strong>{formatNullableNumber(lastLlm.outputTokens)}</strong>
+            </div>
+          </div>
+
+          <div className="debug-integration-status">
+            <span>GOOGLE INTEGRATION</span>
+            <div className="debug-row">
+              <span>OAuth</span>
+              <strong className={googleStatus?.oauth === 'connected' ? 'debug-value-live' : 'debug-value-warning'}>
+                {googleStatus?.oauth ?? 'unavailable'}
+              </strong>
+            </div>
+            <div className="debug-row">
+              <span>Drive</span>
+              <strong>{googleStatus?.services.drive ?? 'mock'}</strong>
+            </div>
+            <div className="debug-row">
+              <span>Gmail</span>
+              <strong>{googleStatus?.services.gmail ?? 'mock'}</strong>
+            </div>
+            <div className="debug-row">
+              <span>Sheets</span>
+              <strong>{googleStatus?.services.sheets ?? 'mock'}</strong>
             </div>
           </div>
         </div>

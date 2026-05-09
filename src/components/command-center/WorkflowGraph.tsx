@@ -150,13 +150,14 @@ const PIPELINE: { id: AgentRole; emoji: string; label: string }[] = [
   { id: 'developer', emoji: '💻', label: 'Dev'  },
   { id: 'reviewer',  emoji: '🔍', label: 'Rev'  },
   { id: 'qa',        emoji: '🧪', label: 'QA'   },
+  { id: 'secretary', emoji: '📝', label: 'Sec'  },
 ];
 
 // node positions — never change; visual state comes from store inside the node
 const STATIC_NODES: AgentFlowNode[] = PIPELINE.map((p, i) => ({
   id:         p.id,
   type:       'agentNode',
-  position:   { x: 10 + i * 54, y: 28 },
+  position:   { x: 8 + i * 46, y: 28 },
   data:       { agentRole: p.id, emoji: p.emoji, label: p.label },
   draggable:  false,
   selectable: true,
@@ -200,6 +201,7 @@ export default function WorkflowGraph() {
     forwardEdge('e2', 'architect', 'developer', ACTIVE_STATUSES.has(agents.developer.status)),
     forwardEdge('e3', 'developer', 'reviewer',  ACTIVE_STATUSES.has(agents.reviewer.status)),
     forwardEdge('e4', 'reviewer',  'qa',        ACTIVE_STATUSES.has(agents.qa.status)),
+    forwardEdge('e5', 'qa',        'secretary', ACTIVE_STATUSES.has(agents.secretary.status)),
     // QA → Developer: bug re-route edge
     {
       id:           'e-bug',

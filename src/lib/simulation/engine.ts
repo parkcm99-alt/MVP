@@ -15,7 +15,10 @@ const WORK_STATUS: Record<AgentRole, AgentStatus> = {
   developer: 'coding',
   reviewer:  'reviewing',
   qa:        'testing',
+  secretary: 'thinking',
 };
+
+const TEAM_ROLES: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa', 'secretary'];
 
 // ─── helpers ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +82,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
   at(1200, () => workAt('developer', '백엔드 API 개발',     '코딩 시작! 💻'));
   at(1600, () => workAt('reviewer',  '코드 리뷰 준비',       '리뷰 대기 중... 🔍'));
   at(2000, () => workAt('qa',        '테스트 계획 수립',     '테스트 케이스 작성 중 🧪'));
+  at(2400, () => workAt('secretary', '리포트 정리 준비',     '후속 액션 정리 준비 중 📝'));
 
   // ── Phase 2: 아키텍처 미팅 ──────────────────────────────────────────────────
   at(5000, () => {
@@ -181,12 +185,10 @@ function buildTimeline(): { steps: Step[]; duration: number } {
     speak('planner', '데일리 스탠드업 시작! 📣');
     log('planner', 'meeting', '[ALL] 데일리 스탠드업 미팅 시작');
     eventBus.emit('meeting.started', { agentId: 'planner' });
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
-    roles.forEach((id, i) => walkTo(id, MEETING_SEATS[i]));
+    TEAM_ROLES.forEach((id, i) => walkTo(id, MEETING_SEATS[i]));
   });
   at(36500, () => {
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
-    roles.forEach(id => store().setStatus(id, 'meeting'));
+    TEAM_ROLES.forEach(id => store().setStatus(id, 'meeting'));
     speak('planner',   '요구사항 분석 완료! ✅');
   });
   at(38000, () => speak('architect', '기술 스택 확정했습니다 🏗️'));
@@ -194,6 +196,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
   at(40000, () => speak('reviewer',  '코드 품질 A+ 🌟'));
   at(41000, () => {
     speak('qa', '모든 테스트 통과! 🧪✅');
+    speak('secretary', '최종 리포트 정리 완료! 📝');
     store().tasks.forEach(t => {
       if (t.status === 'in_progress') store().updateTask(t.id, { status: 'done' });
     });
@@ -201,17 +204,16 @@ function buildTimeline(): { steps: Step[]; duration: number } {
     store().bumpCompleted('planner');
     store().bumpCompleted('architect');
     store().bumpCompleted('reviewer');
+    store().bumpCompleted('secretary');
   });
 
   // ── Phase 7: 복귀 및 초기화 ───────────────────────────────────────────────
   at(43000, () => {
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
-    roles.forEach(id => walkTo(id, DESK_STAND[id]));
+    TEAM_ROLES.forEach(id => walkTo(id, DESK_STAND[id]));
     log('planner', 'system', '🎉 스프린트 완료! 다음 사이클 준비 중...');
   });
   at(45500, () => {
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
-    roles.forEach(id => idle(id));
+    TEAM_ROLES.forEach(id => idle(id));
   });
 
   return { steps, duration: 48000 };
@@ -286,7 +288,7 @@ export class SimulationEngine {
   // ── private scenario fragments ────────────────────────────────────────────
 
   private _runMeeting(onDone?: () => void) {
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
+    const roles = TEAM_ROLES;
     const t = (ms: number, fn: () => void) => this.timers.push(after(ms, fn));
 
     t(0, () => {
@@ -314,7 +316,7 @@ export class SimulationEngine {
   }
 
   private _runCompletionPhase(onDone?: () => void) {
-    const roles: AgentRole[] = ['planner', 'architect', 'developer', 'reviewer', 'qa'];
+    const roles = TEAM_ROLES;
     const t = (ms: number, fn: () => void) => this.timers.push(after(ms, fn));
 
     t(0, () => {

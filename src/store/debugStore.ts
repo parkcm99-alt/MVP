@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { getSupabaseConfigStatus } from '@/lib/supabase/client';
 import type { LlmProvider } from '@/lib/llm/types';
+import type { RequestAnalysisMode } from '@/lib/agents/requestMode';
+import type { WorkRequestAttachment } from '@/lib/work-request/attachments';
 import type { AgentRole } from '@/types';
 
 // ── Full Flow Summary ─────────────────────────────────────────────────────────
@@ -61,6 +63,10 @@ export interface FullFlowSummaryData {
   mockFallbackAgents:      string[];
   /** The user's original work request text, if provided. */
   originalRequest:         string | null;
+  /** Client-only attachment metadata/preview used for report rendering. */
+  attachments?:            WorkRequestAttachment[];
+  /** Business planning is the default; software mode is opt-in/detected. */
+  analysisMode?:           RequestAnalysisMode;
   plannerReport?:          PlannerReportDetails | null;
   architectReport?:        ArchitectReportDetails | null;
   developerReport?:        DeveloperReportDetails | null;

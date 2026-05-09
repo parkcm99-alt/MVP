@@ -25,6 +25,7 @@ const ROLE_ENV_KEYS: Record<AgentRole, string> = {
   developer: 'CLAUDE_DEVELOPER_MODEL',
   reviewer:  'CLAUDE_REVIEWER_MODEL',
   qa:        'CLAUDE_QA_MODEL',
+  secretary: 'CLAUDE_SECRETARY_MODEL',
 };
 
 const ROLE_DEFAULT_MODELS: Partial<Record<AgentRole, string>> = {

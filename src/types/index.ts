@@ -1,4 +1,4 @@
-export type AgentRole = 'planner' | 'architect' | 'developer' | 'reviewer' | 'qa';
+export type AgentRole = 'planner' | 'architect' | 'developer' | 'reviewer' | 'qa' | 'secretary';
 
 export type AgentStatus =
   | 'idle'

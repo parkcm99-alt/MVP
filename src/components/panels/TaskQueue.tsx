@@ -27,7 +27,7 @@ const PRIORITY_COLORS: Record<TaskPriority, string> = {
 };
 
 const ROLE_EMOJIS: Record<string, string> = {
-  planner: '📋', architect: '🏗️', developer: '💻', reviewer: '🔍', qa: '🧪',
+  planner: '📋', architect: '🏗️', developer: '💻', reviewer: '🔍', qa: '🧪', secretary: '📝',
 };
 
 const AGENT_BUTTON_COOLDOWN_MS = 3000;

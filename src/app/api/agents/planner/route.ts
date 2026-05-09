@@ -1,4 +1,9 @@
 import { getAgentRolePrompt } from '@/lib/agents/prompts';
+import {
+  describeRequestAnalysisMode,
+  normalizeRequestAnalysisMode,
+  type RequestAnalysisMode,
+} from '@/lib/agents/requestMode';
 import { claudeClient } from '@/lib/llm/claudeClient';
 import { parseLlmJsonObject } from '@/lib/llm/json';
 import { mockClaude } from '@/lib/llm/mockClaude';
@@ -14,6 +19,8 @@ interface PlannerRequestBody {
   taskDescription?: unknown;
   sessionId?: unknown;
   session_id?: unknown;
+  analysisMode?: unknown;
+  mode?: unknown;
 }
 
 const ROLE = 'planner' as const;
@@ -28,18 +35,34 @@ function normalizeSessionId(value: unknown): string | undefined {
 
 function safePlannerResponse(
   patch: Partial<PlannerAgentResponse> = {},
+  analysisMode: RequestAnalysisMode = 'business',
 ): PlannerAgentResponse {
+  const defaults = analysisMode === 'software'
+    ? {
+      summary: 'Planner가 mock 모드에서 스프린트 작업을 점검했습니다.',
+      steps: [
+        '요구사항을 작게 나누고 우선순위를 확인합니다.',
+        'Architect에게 구현 경계와 데이터 흐름 검토를 넘깁니다.',
+        'Developer/QA가 바로 착수할 수 있도록 완료 기준을 정리합니다.',
+      ],
+      risks: ['요구사항 범위가 넓으면 일정 추정이 흔들릴 수 있습니다.'],
+    }
+    : {
+      summary: 'Planner가 업무 목표와 핵심 이슈를 정리했습니다.',
+      steps: [
+        '핵심 고객과 해결할 문제를 먼저 정의합니다.',
+        '수익모델과 파일럿 범위를 작게 검증합니다.',
+        '운영 리스크와 다음 실행 액션을 우선순위로 정리합니다.',
+      ],
+      risks: ['초기 고객 가설과 가격 검증이 부족하면 실행 우선순위가 흔들릴 수 있습니다.'],
+    };
+
   return {
     ok: true,
     provider: 'mock',
     role: ROLE,
-    summary: 'Planner가 mock 모드에서 스프린트 작업을 점검했습니다.',
-    steps: [
-      '요구사항을 작게 나누고 우선순위를 확인합니다.',
-      'Architect에게 구현 경계와 데이터 흐름 검토를 넘깁니다.',
-      'Developer/QA가 바로 착수할 수 있도록 완료 기준을 정리합니다.',
-    ],
-    risks: ['요구사항 범위가 넓으면 일정 추정이 흔들릴 수 있습니다.'],
+    analysisMode,
+    ...defaults,
     nextAgent: 'architect',
     ...patch,
   };
@@ -89,11 +112,16 @@ function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false):
   return cleaned.length > 0 ? cleaned : fallback;
 }
 
-function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
+function parsePlannerContent(
+  llm: LlmResponse,
+  analysisMode: RequestAnalysisMode,
+): { response: PlannerAgentResponse; debugReason?: string } {
   const fallback = safePlannerResponse({
     provider: llm.provider,
-    summary: normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
-  });
+    summary: analysisMode === 'business'
+      ? 'Planner 응답 일부를 구조화하지 못해 업무 목표 기준으로 요약합니다.'
+      : normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
+  }, analysisMode);
 
   try {
     const parsed = parseLlmJsonObject(llm.content);
@@ -113,7 +141,7 @@ function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse
         steps,
         risks,
         nextAgent: nextAgent.toLowerCase(),
-      }),
+      }, analysisMode),
     };
   } catch {
     return {
@@ -123,9 +151,13 @@ function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse
   }
 }
 
-function buildPlannerSystemPrompt(basePrompt: string): string {
+function buildPlannerSystemPrompt(basePrompt: string, analysisMode: RequestAnalysisMode): string {
   return [
     basePrompt,
+    `Analysis mode: ${describeRequestAnalysisMode(analysisMode)}.`,
+    analysisMode === 'business'
+      ? 'For business mode, steps must be business execution steps, prioritization, customer validation, revenue/pilot planning, and operational risk checks. Avoid internal software implementation terms.'
+      : 'For software mode, steps may be implementation tasks and technical handoffs.',
     'You must return raw JSON only.',
     'Do not use markdown.',
     'Do not wrap the response in ```json fences.',
@@ -137,8 +169,13 @@ function buildPlannerSystemPrompt(basePrompt: string): string {
   ].join('\n');
 }
 
-function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean, latencyMs: number | null = null) {
-  const parsed = parsePlannerContent(llm);
+function respondWithPlannerContent(
+  llm: LlmResponse,
+  analysisMode: RequestAnalysisMode,
+  traceRecorded?: boolean,
+  latencyMs: number | null = null,
+) {
+  const parsed = parsePlannerContent(llm, analysisMode);
   return Response.json(withDevDebug(
     withPlannerTelemetry(parsed.response, llm, traceRecorded, latencyMs),
     parsed.debugReason ?? llm.fallbackReason,
@@ -175,7 +212,11 @@ async function recordPlannerLlmTrace(
   }
 }
 
-async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
+async function buildMockResponse(
+  taskTitle: string,
+  taskDescription: string,
+  analysisMode: RequestAnalysisMode,
+): Promise<PlannerAgentResponse> {
   const mock = await mockClaude.complete({
     agentRole: ROLE,
     messages: [
@@ -188,14 +229,14 @@ async function buildMockResponse(taskTitle: string, taskDescription: string): Pr
   });
 
   return safePlannerResponse({
-    summary: mock.content,
+    ...(analysisMode === 'software' ? { summary: mock.content } : {}),
     provider: 'mock',
     traceRecorded: false,
     model: mock.model,
     latencyMs: mock.latencyMs,
     inputTokens: mock.inputTokens,
     outputTokens: mock.outputTokens,
-  });
+  }, analysisMode);
 }
 
 export async function POST(request: Request) {
@@ -219,6 +260,11 @@ export async function POST(request: Request) {
     'Review the current sprint and suggest the safest next handoff.',
   );
   const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
+  const analysisMode = normalizeRequestAnalysisMode(
+    body.analysisMode ?? body.mode,
+    taskTitle,
+    taskDescription,
+  );
 
   const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
   const liveEnabled = normalizedLiveFlag === 'true';
@@ -226,7 +272,7 @@ export async function POST(request: Request) {
 
   if (!liveEnabled) {
     return Response.json(withDevDebug(
-      await buildMockResponse(taskTitle, taskDescription),
+      await buildMockResponse(taskTitle, taskDescription, analysisMode),
       `live_disabled:${normalizedLiveFlag ?? 'missing'}`,
       false,
     ));
@@ -234,22 +280,23 @@ export async function POST(request: Request) {
 
   if (!hasApiKey) {
     return Response.json(withDevDebug(
-      await buildMockResponse(taskTitle, taskDescription),
+      await buildMockResponse(taskTitle, taskDescription, analysisMode),
       'missing_api_key',
       false,
     ));
   }
 
-  const plannerPrompt = getAgentRolePrompt(ROLE);
+  const plannerPrompt = getAgentRolePrompt(ROLE, analysisMode);
   const claudeStartedAt = Date.now();
   const llm = await claudeClient.complete({
     agentRole: ROLE,
     model: getModelForRole(ROLE),
-    systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt),
+    systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt, analysisMode),
     messages: [
       {
         role: 'user',
         content: [
+          `Analysis mode: ${describeRequestAnalysisMode(analysisMode)}`,
           `Task title: ${taskTitle}`,
           `Task description: ${taskDescription}`,
           'Create a short planning summary, 2-4 execution steps, 0-3 risks, and the next agent.',
@@ -263,5 +310,5 @@ export async function POST(request: Request) {
 
   const traceRecorded = await recordPlannerLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
 
-  return respondWithPlannerContent(llm, traceRecorded, claudeLatencyMs);
+  return respondWithPlannerContent(llm, analysisMode, traceRecorded, claudeLatencyMs);
 }

@@ -25,10 +25,13 @@
 | Claude API Reviewer 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Claude API QA 1단계 | ✅ 서버 전용 route + Task Queue 버튼 연결 |
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
-| **Run Full Agent Flow** | ✅ Production 검증 완료 — 5단계 순차 실행, agent_traces 5개 저장 확인 |
-| **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, 5 agent 요약, 토큰/레이턴시, 접기/펼치기 |
+| **Run Full Agent Flow** | ✅ Production 검증 완료 — 5 Claude agent 순차 실행 + Secretary 정리, agent_traces 5개 저장 확인 |
+| **Full Flow Summary Panel** | ✅ 실행 결과 요약 패널 — running/completed/failed 상태, agent 요약, 토큰/레이턴시, 접기/펼치기 |
 | **Final Report Generator** | ✅ Full Flow 결과 state 기반 최종 업무 보고서 생성 + Markdown Copy/Download/Print |
+| **Secretary Agent** | ✅ Full Flow 결과 정리 + Slack/Telegram 알림 준비/전송 route scaffolding |
 | **Work Request Input** | ✅ 업무 요청 직접 입력 + 템플릿 버튼 → Full Flow 시작 입력으로 사용, 5초 cooldown, 실행 중 비활성화 |
+| **Work Request Attachments** | ✅ `.txt`/`.md`/`.csv`/`.json` 브라우저 텍스트 추출, `.pdf`/`.docx` 파일명 첨부 준비 |
+| **Google Integration Layer** | ✅ OAuth/status route + Drive/Gmail/Sheets safe mock adapter scaffolding |
 | **UI Layout Refresh** | ✅ Top Command / Main Simulation / Right Tabs / Bottom Event Log 4영역 정리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
@@ -39,9 +42,9 @@
 
 ## 소개
 
-5명의 AI 에이전트(Planner, Architect, Developer, Reviewer, QA)가 오피스에서 스프린트를 진행하는 모습을 픽셀아트로 시각화한 시뮬레이션입니다.
+6명의 AI 에이전트(Planner, Architect, Developer, Reviewer, QA, Secretary)가 오피스에서 스프린트를 진행하는 모습을 픽셀아트로 시각화한 시뮬레이션입니다.
 
-Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해 Claude live 호출까지 연결되었습니다. AgentOps, OpenAI, LangGraph, CrewAI 실제 연동은 아직 하지 않았습니다.
+Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해 Claude live 호출까지 연결되었습니다. Secretary는 1차 버전에서 추가 Claude 호출 없이 Final Report state를 요약하고 알림 메시지를 준비합니다. AgentOps, OpenAI, LangGraph, CrewAI 실제 연동은 아직 하지 않았습니다.
 
 ---
 
@@ -53,7 +56,7 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - 블로킹 시 셔츠 적색 변환, 말풍선 표시
 - 48초 자동 루프 시나리오 (스프린트 시작 → 아키텍처 미팅 → PR 개발 → QA 버그 발견 → 리뷰 → 스탠드업 → 복귀)
 
-### 5 AI 에이전트
+### 6 AI 에이전트
 | 에이전트 | 역할 | 활성 상태 |
 |----------|------|-----------|
 | Planner | 스프린트 계획 수립 | `thinking` |
@@ -61,6 +64,7 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 | Developer | 기능 구현 | `coding` |
 | Reviewer | 코드 리뷰 | `reviewing` |
 | QA | 품질 검증 | `testing` |
+| Secretary | 최종 리포트 정리·알림 준비 | `thinking` |
 
 ### 컨트롤 패널
 - **Start Sprint** — 48초 루프 시나리오 시작
@@ -76,7 +80,9 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - 기존 입력값이 있을 때 템플릿을 누르면 덮어쓰기 확인창 표시
   - Event Log에 `[FLOW] 사용자 요청 기반 Full Flow 시작` 등 입력 기반 로그 표시
   - Full Flow Summary Panel의 **Request** 항목에 원본 요청 표시
-- **⚡ Run Full Flow / ⚡ Run Flow from Request** — Planner → Architect → Developer → Reviewer → QA 5단계 순차 실행
+  - 첨부파일: `.txt` / `.md` / `.csv` / `.json`은 브라우저에서 텍스트를 읽어 Planner context에 포함
+  - `.pdf` / `.docx`는 1차 버전에서 파일명/크기만 표시하며 본문 추출은 추후 확장 예정
+- **⚡ Run Full Flow / ⚡ Run Flow from Request** — Planner → Architect → Developer → Reviewer → QA → Secretary 순차 실행
   - 각 단계 결과(summary + key arrays)를 다음 단계의 `taskDescription`으로 전달
   - Event Log에 `[FLOW]`, `[Planner]`, `[Architect]` 등 단계별 메시지 기록
   - Debug Panel에 각 단계 `provider`·`model`·`latencyMs`·`inputTokens`·`outputTokens` 업데이트
@@ -85,6 +91,7 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - 개별 Agent 버튼은 호출 중 중복 클릭 차단 + 호출 후 **3초 cooldown**("Wait 3s")
   - 단계별 실패 시 Flow 중단 + failedAgent/failReason Summary 표시 + 해당 단계만 재시도 가능
   - mock fallback 사용 시 Event Log와 Summary `mockFallbackAgents`에 명확히 표시
+  - 완료 후 Secretary가 최종 리포트와 알림 메시지를 정리하고, Event Log에 `[Secretary] 최종 리포트 정리 완료` 표시
   - 완료 시 Report 탭에서 최종 업무 보고서 자동 생성, Event Log에 `[REPORT] 최종 보고서 생성 완료` 표시
 - **Complete Sprint** — 스프린트 완료 시퀀스
 - **Reset** — 초기 상태로 복귀
@@ -106,10 +113,10 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 - **Agent Status** — 에이전트별 현재 상태·현재 태스크·완료 수
 - **Event Log** — 하단 전체 폭 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
 - Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
-- **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
+- **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA→Secretary React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
 - **Summary 탭** — Full Flow Summary Panel 표시. Run Full Flow 실행 후 표시됨
   - `running` (amber) · `completed` (green) · `failed` (red) 상태 배지
-  - 5개 에이전트별 summary 텍스트, Reviewer `approvalStatus` badge, QA `finalStatus` badge
+  - 5개 Claude-connected 에이전트별 summary 텍스트, Reviewer `approvalStatus` badge, QA `finalStatus` badge
   - `totalInputTokens` · `totalOutputTokens` · `totalTokens` · `totalLatencyMs` 메트릭 그리드
   - 완료 시각 KST `HH:mm:ss` 표시
   - 실패 시: 실패한 에이전트명, 실패 사유, 완료된 에이전트 목록, **Retry Failed Agent** 버튼 표시
@@ -122,7 +129,9 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - **Download Markdown** 버튼으로 `ai-agent-report-YYYYMMDD-HHmm.md` 다운로드
   - **Print** 버튼으로 브라우저 인쇄 실행
   - Report History는 브라우저 `localStorage`에 최근 5개만 임시 저장
-- **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
+  - **Send to Slack** / **Send to Telegram** 버튼은 서버 전용 notify route를 통해 전송. 비활성/미설정이면 Not configured 상태로 표시
+  - Google Drive/Gmail/Sheets 버튼은 1차 버전에서 Coming soon 비활성 상태로 표시
+- **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token, Google OAuth/Drive/Gmail/Sheets 상태 표시 (접기/펼치기, mock/trace 실패 경고 표시)
 - **Traces 탭** — Agent Trace Viewer에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
 ### 타입드 이벤트 버스
@@ -249,6 +258,7 @@ CLAUDE_<ROLE>_MODEL  →  역할별 내장 기본값  →  CLAUDE_MODEL  →  cl
 | `CLAUDE_DEVELOPER_MODEL` | Developer | `CLAUDE_MODEL` 상속 |
 | `CLAUDE_REVIEWER_MODEL` | Reviewer | `claude-haiku-4-5-20251001` |
 | `CLAUDE_QA_MODEL` | QA | `claude-haiku-4-5-20251001` |
+| `CLAUDE_SECRETARY_MODEL` | Secretary | 구조만 준비. 1차 버전은 Claude 호출 없음 |
 
 **명시적 비용 최적화 예시** — Vercel Environment Variables에서도 아래처럼 명시할 수 있습니다.
 
@@ -259,6 +269,7 @@ CLAUDE_ARCHITECT_MODEL=claude-sonnet-4-6
 CLAUDE_DEVELOPER_MODEL=claude-sonnet-4-6
 CLAUDE_REVIEWER_MODEL=claude-haiku-4-5-20251001
 CLAUDE_QA_MODEL=claude-haiku-4-5-20251001
+CLAUDE_SECRETARY_MODEL=claude-haiku-4-5-20251001
 ```
 
 실제 호출에 사용된 모델명은 `agent_traces.model` 필드와 Debug Panel / Agent Trace Viewer에 그대로 표시됩니다.
@@ -320,7 +331,7 @@ ActionBar 상단에 업무 요청 입력창이 있습니다.
    - Full Flow Summary Panel **Request** 항목에 원본 요청 텍스트 표시
 
 4. **완료 후**
-   - Full Flow Summary Panel에서 5개 에이전트 결과를 확인합니다
+   - Full Flow Summary Panel에서 5개 Claude-connected 에이전트 결과와 Secretary 정리 상태를 확인합니다
    - Report 탭에서 최종 업무 보고서를 확인하고 **Copy Report** / **Download Markdown** / **Print**를 사용할 수 있습니다
    - 5초 cooldown(버튼에 "⏳ Wait 5s" 표시) 후 다시 실행 가능합니다
    - 입력창을 수정해 다른 요청으로 재실행할 수 있습니다
@@ -355,6 +366,69 @@ Work Request 입력창 오른쪽에는 빠른 템플릿 버튼이 있습니다.
 | 정산 검토 | 정산 확인 항목, 예외 케이스, 검증 체크리스트 정리 |
 
 기존 입력값이 있을 때 템플릿 버튼을 누르면 덮어쓰기 확인창이 표시됩니다.
+
+### Work Request 첨부파일
+
+Work Request 영역에서 파일을 첨부할 수 있습니다. 1차 버전은 보안과 비용을 위해 Supabase Storage나 외부 API에 파일을 저장하지 않고 브라우저 state에서만 유지합니다.
+
+| 파일 형식 | 처리 방식 |
+|-----------|-----------|
+| `.txt` / `.md` / `.csv` / `.json` | 브라우저에서 텍스트를 읽어 Work Request context에 포함 |
+| `.pdf` / `.docx` | 파일명·크기만 첨부 표시. 본문 추출은 추후 지원 |
+
+- 첨부파일 목록에는 파일명, 크기, 본문 반영 여부가 표시됩니다.
+- 텍스트 파일은 기본 256KB 이하만 본문 preview/context에 포함합니다.
+- Full Flow 실행 시 Planner에게 원 요청과 첨부파일 목록/텍스트 preview를 함께 전달합니다.
+- Report 탭에는 Original Request 아래 Attachments 섹션이 표시됩니다.
+- 파일 원문은 Supabase에 저장하지 않습니다. 영구 저장이 필요하면 추후 Supabase Storage 설계를 별도로 추가합니다.
+
+### Secretary Agent / Notifications
+
+Secretary는 1차 버전에서 별도 Claude API를 호출하지 않습니다. Full Flow 완료 후 Final Report state를 기반으로 리포트 정리와 알림 메시지 준비를 수행합니다.
+
+| 기능 | 상태 |
+|------|------|
+| 최종 리포트 정리 로그 | ✅ `[Secretary] 최종 리포트 정리 완료` |
+| Slack 알림 route | ✅ `POST /api/notify` (`channel:"slack"`) |
+| Telegram 알림 route | ✅ `POST /api/notify` (`channel:"telegram"`) |
+| Report 탭 전송 버튼 | ✅ configured 상태일 때만 활성화 |
+| Gmail/Google Docs/Sheets 저장/전송 | 🚧 Google scaffolding만 준비 |
+
+서버 전용 환경변수:
+
+```bash
+ENABLE_SLACK_NOTIFY=false
+SLACK_WEBHOOK_URL=
+ENABLE_TELEGRAM_NOTIFY=false
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+```
+
+`SLACK_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`은 절대 `NEXT_PUBLIC_` prefix를 붙이지 않습니다. Vercel에서는 Environment Variables에 Sensitive 값으로 저장하는 것을 권장합니다. 비활성/미설정이면 버튼은 Not configured/disabled 상태로 표시되고 앱은 계속 동작합니다.
+
+### Google Integration Layer
+
+Google Drive / Gmail / Google Sheets 연동을 위한 OAuth/API 구조만 준비되어 있습니다. 1차 버전에서는 상태 확인과 안전한 mock/TODO adapter만 제공하며, Gmail 전송/삭제/수정 같은 위험 동작은 구현하지 않습니다.
+
+| Route / Adapter | 상태 |
+|-----------------|------|
+| `GET /api/google/status` | ✅ OAuth/Drive/Gmail/Sheets 상태 표시 |
+| `GET /api/google/auth/start` | ✅ OAuth URL redirect scaffolding |
+| `GET /api/google/auth/callback` | ✅ callback 수신 scaffolding, token exchange TODO |
+| `src/lib/google/drive.ts` | ✅ search/save placeholder, 실제 호출 없음 |
+| `src/lib/google/gmail.ts` | ✅ read/search placeholder, send/delete/archive 없음 |
+| `src/lib/google/sheets.ts` | ✅ export placeholder, append/update 없음 |
+
+서버 전용 환경변수:
+
+```bash
+GOOGLE_OAUTH_ENABLED=false
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
+```
+
+`GOOGLE_CLIENT_SECRET`은 서버 전용이며 `NEXT_PUBLIC_` prefix를 붙이면 안 됩니다. Gmail은 민감 권한이므로 운영 전 OAuth scope, 사용자 동의 화면, 토큰 저장 방식, 감사 로그를 별도로 검토해야 합니다. 리포트를 Google Drive에 저장하거나 Sheets에 export하는 기능은 다음 단계에서 안전한 token storage를 설계한 뒤 연결합니다.
 
 ### Report History
 
@@ -434,7 +508,7 @@ with check (true);
 | Agent Trace Viewer에 5개 `llm_call` trace 표시 | ✅ 확인 |
 | Supabase `agent_traces`에 planner/architect/developer/reviewer/qa `llm_call` 저장 | ✅ 확인 |
 | 완료 후 Debug Panel `last flow` 누적 token/latency 요약 표시 | ✅ 확인 |
-| Full Flow Summary Panel — running/completed/failed 상태 + 5 agent 요약 | ✅ 구현 완료 |
+| Full Flow Summary Panel — running/completed/failed 상태 + 5 Claude agent 요약 | ✅ 구현 완료 |
 | Summary Panel 접기/펼치기 | ✅ 구현 완료 |
 | 실패 시 failedAgent · failReason · completedAgents 표시 | ✅ 구현 완료 |
 | Event Log 최종 요약 메시지 `[FLOW] 전체 실행 완료 — QA / Reviewer / total tokens` | ✅ 구현 완료 |
@@ -564,7 +638,7 @@ Vercel Dashboard → Project → Settings → Environment Variables에서 동일
 - 다음 단계: 에이전트 클릭 카드 Trace 섹션 실연결 또는 전체 agent workflow 자동 orchestration
 
 ### Phase 5 — LangGraph / CrewAI Orchestration
-- 5 에이전트 전체 LangGraph 워크플로우 실연결
+- 6 에이전트 전체 LangGraph 워크플로우 실연결
 - CrewAI 기반 에이전트 협업 시나리오
 - 실제 태스크 분배 및 핸드오프
 
@@ -583,12 +657,16 @@ src/
 │   ├── page.tsx              # 루트 레이아웃 — office-col / side-col 배치
 │   ├── layout.tsx
 │   ├── api/
-│   │   └── agents/
+│   │   ├── agents/
 │   │       ├── planner/route.ts     # Planner 서버 전용 Claude/mock API route
 │   │       ├── architect/route.ts   # Architect 서버 전용 Claude/mock API route
 │   │       ├── developer/route.ts   # Developer 서버 전용 Claude/mock API route
 │   │       ├── reviewer/route.ts    # Reviewer 서버 전용 Claude/mock API route
 │   │       └── qa/route.ts          # QA 서버 전용 Claude/mock API route
+│   │   ├── notify/route.ts          # Slack/Telegram 서버 전용 알림 route
+│   │   └── google/
+│   │       ├── status/route.ts      # Google OAuth/Drive/Gmail/Sheets 상태
+│   │       └── auth/                # OAuth start/callback scaffolding
 │   └── globals.css           # 전체 CSS (픽셀 테마, 애니메이션, 패널 스타일)
 │
 ├── components/
@@ -625,11 +703,14 @@ src/
 │   │   └── errorTracker.ts   # 퍼시스턴스 에러 pub/sub
 │   ├── time.ts               # formatKstTime — UTC → KST 변환
 │   ├── agents/
-│   │   └── prompts.ts        # Planner/Architect/Developer/Reviewer/QA 시스템 프롬프트 초안
+│   │   └── prompts.ts        # Planner/Architect/Developer/Reviewer/QA/Secretary 시스템 프롬프트
 │   ├── llm/
 │   │   ├── types.ts          # LLM provider/message/response/prompt 타입
 │   │   ├── mockClaude.ts     # 비용 없는 Claude mock 응답
 │   │   └── claudeClient.ts   # 서버 전용 Claude SDK client + 안전 fallback
+│   ├── notify/               # Slack/Telegram notify adapter
+│   ├── google/               # Google OAuth + Drive/Gmail/Sheets safe scaffolding
+│   ├── work-request/         # Work Request attachment helpers
 │   ├── api/
 │   │   └── index.ts          # Claude API 스텁
 │   └── agentops/
