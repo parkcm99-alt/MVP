@@ -444,8 +444,8 @@ src/
 상단 **Operations Lens**에서 agent role, task status, priority, trace type, sessionId,
 free-text keyword를 조합하면 Task Queue, Event Log, Trace Correlation Debugger가 같은
 필터를 즉시 공유합니다. 각 패널은 `filtered/total`, empty state, keyword highlight를
-표시하며 **Clear all**로 초기화합니다. 필터는 Zustand 원본 배열이나 Supabase schema를
+표시하며 공통 바 또는 각 패널의 **Clear all**로 초기화합니다. 필터는 Zustand 원본 배열이나 Supabase schema를
 수정하지 않는 read-only derived view이므로 Reset, realtime update, Plan with Claude 뒤에도
 현재 데이터에서 다시 계산됩니다. Trace 영역의 local-only **Lens warnings**는 task/event/trace
-누락이나 session 불일치를 요약하며 비밀값은 포함하지 않습니다. Supabase가 없는 mock mode도
+누락, sessionId 불일치, agent role 불일치를 요약하며 비밀값은 포함하지 않습니다. Supabase가 없는 mock mode도
 동일하게 지원합니다.

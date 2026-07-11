@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
 import { includesKeyword, useLensStore } from '@/store/lensStore';
+import LensHighlight from '@/components/debug/LensHighlight';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
 import type { AgentRole, AgentStatus, TaskPriority, TaskStatus } from '@/types';
@@ -44,6 +45,7 @@ export default function TaskQueue() {
   const addLocalTrace = useDebugStore(s => s.addLocalTrace);
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const lens = useLensStore(s => s.filters);
+  const clearLens = useLensStore(s => s.clearAll);
   const visibleTasks = tasks.filter(t =>
     (!lens.role || t.assignedTo === lens.role) &&
     (!lens.status || t.status === lens.status) &&
@@ -159,7 +161,9 @@ export default function TaskQueue() {
     <div className="panel">
       <div className="panel-header">
         <span>📋 TASK QUEUE</span>
-        <span className="panel-badge">{visibleTasks.length}/{tasks.length}</span>
+        <span><span className="panel-badge">{visibleTasks.length}/{tasks.length}</span>{' '}
+          <button type="button" className="panel-collapse-btn" onClick={clearLens}>CLEAR ALL</button>
+        </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, padding: '4px 6px', borderBottom: '1px solid #1e293b' }}>
         {([
@@ -207,7 +211,7 @@ export default function TaskQueue() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
-                      {lens.keyword && task.title.toLowerCase().includes(lens.keyword.toLowerCase()) ? <mark>{task.title}</mark> : task.title}
+                      <LensHighlight text={task.title} keyword={lens.keyword} />
                     </span>
                     <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
                       {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
@@ -215,7 +219,7 @@ export default function TaskQueue() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
-                      {formatDescription(task.description)}
+                      <LensHighlight text={formatDescription(task.description)} keyword={lens.keyword} />
                     </span>
                     {task.assignedTo && (
                       <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>

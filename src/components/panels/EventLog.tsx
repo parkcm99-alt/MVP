@@ -5,6 +5,7 @@ import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
 import { includesKeyword, useLensStore } from '@/store/lensStore';
+import LensHighlight from '@/components/debug/LensHighlight';
 
 const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
   task:    { color: '#60A5FA', prefix: '[TASK]' },
@@ -24,6 +25,7 @@ export default function EventLog() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
   const lens = useLensStore(s => s.filters);
+  const clearLens = useLensStore(s => s.clearAll);
   const visibleEvents = events.filter(e =>
     (!lens.role || e.agentId === lens.role) &&
     includesKeyword(e.message, lens.keyword)
@@ -53,6 +55,7 @@ export default function EventLog() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>📝 EVENT LOG</span>
           <span className="panel-badge">{visibleEvents.length}/{events.length}</span>
+          <button type="button" className="panel-collapse-btn" onClick={clearLens}>CLEAR ALL</button>
         </div>
         <button
           className="panel-collapse-btn"
@@ -97,7 +100,7 @@ export default function EventLog() {
               >
                 <span style={{ color: '#334155', flexShrink: 0 }}>{formatKstTime(evt.timestamp)}</span>
                 <span style={{ color: style.color, flexShrink: 0 }}>{style.prefix}</span>
-                <span style={{ color: '#CBD5E1' }}>{lens.keyword && evt.message.toLowerCase().includes(lens.keyword.toLowerCase()) ? <mark>{evt.message}</mark> : evt.message}</span>
+                <span style={{ color: '#CBD5E1' }}><LensHighlight text={evt.message} keyword={lens.keyword} /></span>
               </div>
             );
           })}
