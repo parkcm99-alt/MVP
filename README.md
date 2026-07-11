@@ -598,10 +598,10 @@ cp .env.example .env.local
 | 변수 | 위치 | 용도 |
 |------|------|------|
 | `NEXT_PUBLIC_SUPABASE_URL` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
-| `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (`agent_traces.llm_call` insert 우선 키) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API Keys | 브라우저용 `Publishable key` (`sb_publishable_...`) 또는 legacy anon JWT |
+| `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API Keys | 서버 전용 service-role/secret key (`agent_traces.llm_call` insert 우선) |
 
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 Supabase anon JWT만 넣습니다. `sk-ant-...` 같은 Claude/Anthropic key나 service role key를 넣으면 브라우저 번들에 노출되고 Supabase client가 `Invalid API key`로 실패합니다. 실수로 노출했다면 해당 provider key를 즉시 rotate하세요.
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 **Connect → App Frameworks** 또는 **Project Settings → API Keys**에서 확인한 브라우저용 publishable key(또는 legacy anon JWT)를 넣습니다. `sb_secret_...`, `service_role`, `sk-ant-...` 같은 서버 비밀키를 넣으면 브라우저 번들에 노출되므로 절대 사용하지 마세요. 실수로 노출했다면 해당 키를 즉시 rotate하세요.
 
 ### 2. 스키마 적용
 
@@ -750,7 +750,7 @@ Debug 패널은 Supabase `agent_traces`의 최신 100건을 세션별로 묶고,
 
 자동 탐지 항목: trace 기록 실패, handoff 후 decision 누락, Ask Agent 후 `llm_call` 누락, 10초 이상 지연, 실패 계열 `finalStatus`/`approvalStatus`. **Create Debug Finding**은 중복 signature를 막은 local-only Reviewer/QA 작업을 생성하며 Supabase에는 쓰지 않습니다.
 
-**Export Sanitized JSON**은 토큰·인증정보·secret을 재귀적으로 마스킹합니다. **Import Bundle**은 schema v1 JSON을 읽기 전용으로 열어 오프라인/로컬 분석에 사용할 수 있습니다. Supabase가 없거나 조회가 실패해도 앱은 안전하게 local analysis mode로 유지됩니다.
+**Export Sanitized JSON**은 현재 선택한 session의 전체 trace를 내보내며 토큰·인증정보·secret을 재귀적으로 마스킹합니다. **Import Bundle**은 유효한 schema v1·동일 session trace·최대 100건만 받아 읽기 전용으로 열고, 손상되거나 지원하지 않는 bundle은 안전하게 거부합니다. Import 분석 중에는 finding/task/event/trace를 Supabase에 쓰지 않습니다. Supabase가 없거나 조회가 실패해도 앱은 안전하게 local analysis mode로 유지됩니다.
 
 ### Operations Lens
 The shared Operations Lens filters tasks, events, and trace correlation views by role, status, priority, trace type, session, and keyword. Active filters persist in the browser and can be reset with **Clear all**; counts show visible/total records and empty states explain when no records match.

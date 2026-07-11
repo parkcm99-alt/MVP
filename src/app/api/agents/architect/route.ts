@@ -25,13 +25,16 @@ interface ArchitectRequestBody {
 
 const ROLE = 'architect' as const;
 const NEXT_AGENTS = ['developer', 'reviewer', 'qa'] as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeText(value: unknown, fallback: string, maxLength = 700): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : fallback;
 }
 
 function normalizeSessionId(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return UUID_PATTERN.test(normalized) ? normalized : undefined;
 }
 
 function normalizeNextAgent(value: unknown): ArchitectAgentResponse['nextAgent'] {

@@ -24,13 +24,16 @@ interface PlannerRequestBody {
 }
 
 const ROLE = 'planner' as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeText(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 600) : fallback;
 }
 
 function normalizeSessionId(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  return UUID_PATTERN.test(normalized) ? normalized : undefined;
 }
 
 function safePlannerResponse(

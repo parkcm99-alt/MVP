@@ -18,6 +18,22 @@ export function isSupabaseJwtKey(key?: string | null): key is string {
   return Boolean(normalized?.startsWith('eyJ') && normalized.split('.').length === 3);
 }
 
+/** Browser-safe Supabase API key: legacy anon JWT or current publishable key. */
+export function isSupabasePublicKey(key?: string | null): key is string {
+  const normalized = key?.trim();
+  if (!normalized) return false;
+  const isLegacyJwt = normalized.startsWith('eyJ') && normalized.split('.').length === 3;
+  return isLegacyJwt || normalized.startsWith('sb_publishable_');
+}
+
+/** Server-only elevated key: legacy service-role JWT or current secret key. */
+export function isSupabaseServerKey(key?: string | null): key is string {
+  const normalized = key?.trim();
+  if (!normalized) return false;
+  const isLegacyJwt = normalized.startsWith('eyJ') && normalized.split('.').length === 3;
+  return isLegacyJwt || normalized.startsWith('sb_secret_');
+}
+
 export function getPublicSupabaseConfig(): {
   url?: string;
   key?: string;
@@ -34,8 +50,8 @@ export function getPublicSupabaseConfig(): {
     return { url, key, status: 'invalid_url' };
   }
 
-  // Supabase anon keys are JWTs. Anthropic/OpenAI/service secrets must never sit in NEXT_PUBLIC_*.
-  if (!isSupabaseJwtKey(key)) {
+  // Accept both legacy anon JWTs and current publishable keys. Never accept secret keys here.
+  if (!isSupabasePublicKey(key)) {
     return { url, key, status: 'invalid_key' };
   }
 

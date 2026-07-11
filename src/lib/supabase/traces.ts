@@ -1,4 +1,4 @@
-import { isSupabaseJwtKey, isSupabaseProjectUrl } from './config';
+import { isSupabaseProjectUrl, isSupabasePublicKey, isSupabaseServerKey } from './config';
 import { getSessionId, uuid } from './session';
 import type { AgentTraceInsert } from './types';
 import type { AgentRole } from '@/types';
@@ -43,14 +43,14 @@ function getSupabaseRestConfig(): { url?: string; key?: string; reason?: string 
   }
 
   if (isServer) {
-    if (isSupabaseJwtKey(serviceRoleKey)) {
+    if (isSupabaseServerKey(serviceRoleKey)) {
       return { url, key: serviceRoleKey };
     }
 
     warnRestConfigOnce(serviceRoleKey ? 'invalid_service_role_key' : 'missing_service_role_key');
   }
 
-  if (isSupabaseJwtKey(publicKey)) {
+  if (isSupabasePublicKey(publicKey)) {
     return { url, key: publicKey };
   }
 
