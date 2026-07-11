@@ -449,3 +449,8 @@ free-text keyword를 조합하면 Task Queue, Event Log, Trace Correlation Debug
 현재 데이터에서 다시 계산됩니다. Trace 영역의 local-only **Lens warnings**는 task/event/trace
 누락, sessionId 불일치, agent role 불일치를 요약하며 비밀값은 포함하지 않습니다. Supabase가 없는 mock mode도
 동일하게 지원합니다.
+
+각 패널 헤더에서도 **Clear all**을 실행할 수 있습니다. `task status`/`priority`는 관련 task를
+기준으로 event/trace를 좁히고, `trace_type`은 관측된 trace와 같은 agent/task의 항목을
+상관시켜 보여줍니다. `sessionId`가 현재 세션과 다르면 Task Queue/Event Log는 안전한 empty
+state를 표시하고 Trace Correlation 영역에 session mismatch warning을 남깁니다.

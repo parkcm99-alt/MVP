@@ -8,7 +8,7 @@ import { formatKstTime } from '@/lib/time';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
 import { includesKeyword, useLensStore } from '@/store/lensStore';
-import LensHighlight from '@/components/debug/LensHighlight';
+import LensHighlight from './LensHighlight';
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 type Anomaly = { signature: string; summary: string; hint: string; role: 'reviewer' | 'qa' };
@@ -98,6 +98,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   const addLocalTask = useSimStore(s => s.addLocalTask);
   const addEvent = useSimStore(s => s.addEvent);
   const setHighlight = useDebugStore(s => s.setHighlightedTaskTitle);
+  const setObservedTraces = useDebugStore(s => s.setObservedTraces);
   const recentAgentCalls = useDebugStore(s => s.recentAgentCalls);
   const lens = useLensStore(s => s.filters);
   const clearLens = useLensStore(s => s.clearAll);
@@ -124,17 +125,23 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
 
   }, []);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load, refreshKey]);
+  useEffect(() => { setObservedTraces(traces); }, [traces, setObservedTraces]);
 
   const sessions = useMemo(() => [...new Set(traces.map(t => t.session_id))], [traces]);
   const sessionTraces = useMemo(() => traces.filter(t => t.session_id === selected), [traces, selected]);
   const lensScopeTraces = useMemo(() => lens.sessionId
-    ? traces.filter(t => t.session_id.toLowerCase().includes(lens.sessionId.toLowerCase()))
+    ? traces.filter(t => t.session_id.toLowerCase().includes(lens.sessionId.trim().toLowerCase()))
     : sessionTraces, [traces, sessionTraces, lens.sessionId]);
   const active = useMemo(() => lensScopeTraces.filter(t =>
     (!lens.role || t.agent_id === lens.role) &&
     (!lens.traceType || t.trace_type === lens.traceType) &&
+    (!(lens.status || lens.priority) || tasks.some(task =>
+      (!lens.status || task.status === lens.status) &&
+      (!lens.priority || task.priority === lens.priority) &&
+      (!taskTitle(t) || task.title.toLowerCase().includes(taskTitle(t).toLowerCase()) || taskTitle(t).toLowerCase().includes(task.title.toLowerCase()))
+    )) &&
     includesKeyword(`${taskTitle(t)} ${JSON.stringify(t.metadata ?? {})}`, lens.keyword)
-  ), [lensScopeTraces, lens]);
+  ), [lensScopeTraces, lens, tasks]);
   const anomalies = useMemo(() => {
     const traceAnomalies = anomaliesFor(sessionTraces);
     if (readOnly) return traceAnomalies;
@@ -160,41 +167,23 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   const titles = useMemo(() => [...new Set(active.map(taskTitle).filter(Boolean))], [active]);
   const relatedTasks = tasks.filter(t => titles.some(x => t.title.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(t.title.toLowerCase())));
   const relatedEvents = events.filter(e => titles.some(x => e.message.toLowerCase().includes(x.toLowerCase())) || active.some(t => e.agentId === t.agent_id)).slice(0, 8);
-  const lensWarnings = useMemo(() => {
-    const filteredTasks = tasks.filter(t =>
-      (!lens.role || t.assignedTo === lens.role) &&
-      (!lens.status || t.status === lens.status) &&
-      (!lens.priority || t.priority === lens.priority) &&
-      includesKeyword(`${t.title} ${t.description}`, lens.keyword)
-    );
-    const filteredEvents = events.filter(e =>
-      (!lens.role || e.agentId === lens.role) &&
-      includesKeyword(`${e.agentName} ${e.message}`, lens.keyword)
-    );
-    const hasTitleMatch = (text: string, title: string) => {
-      const a = text.toLowerCase();
-      const b = title.toLowerCase();
-      return a.includes(b) || b.includes(a);
-    };
-    const missingTrace = filteredTasks.some(task => !lensScopeTraces.some(trace =>
-      hasTitleMatch(taskTitle(trace), task.title) &&
-      (!lens.role || trace.agent_id === lens.role)
-    ));
-    const missingEvent = filteredTasks.some(task => !filteredEvents.some(event =>
-      hasTitleMatch(event.message, task.title) || event.agentId === task.assignedTo
-    ));
-    const sessionMismatch = Boolean(lens.sessionId) &&
-      !traces.some(trace => trace.session_id.toLowerCase().includes(lens.sessionId.toLowerCase()));
-    const roleMismatch = Boolean(lens.role) &&
-      (filteredTasks.length > 0 || filteredEvents.length > 0) &&
-      !lensScopeTraces.some(trace => trace.agent_id === lens.role);
-    return [
-      ...(missingEvent ? ['A matching task has no related event.'] : []),
-      ...(missingTrace ? ['A matching task has no related trace in this session.'] : []),
-      ...(sessionMismatch ? ['No trace session matches the sessionId filter.'] : []),
-      ...(roleMismatch ? ['The selected agent role has task/event data but no trace in this session.'] : []),
-    ];
-  }, [tasks, events, traces, lensScopeTraces, lens]);
+  const scopedTasks = tasks.filter(t =>
+    (!lens.role || t.assignedTo === lens.role) &&
+    (!lens.status || t.status === lens.status) &&
+    (!lens.priority || t.priority === lens.priority) &&
+    includesKeyword(`${t.title} ${t.description}`, lens.keyword)
+  );
+  const lensWarnings = [
+    ...(scopedTasks.some(t => !events.some(e =>
+      e.agentId === t.assignedTo || e.message.toLowerCase().includes(t.title.toLowerCase())
+    )) ? ['Matching task has no related event.'] : []),
+    ...(scopedTasks.some(t => !lensScopeTraces.some(trace => {
+      const title = taskTitle(trace).toLowerCase();
+      return trace.agent_id === t.assignedTo || (title && (t.title.toLowerCase().includes(title) || title.includes(t.title.toLowerCase())));
+    })) ? ['Matching task has no related trace.'] : []),
+    ...(lens.sessionId && !traces.some(t => t.session_id.toLowerCase().includes(lens.sessionId.trim().toLowerCase())) ? ['SessionId mismatch.'] : []),
+    ...(lens.role && lensScopeTraces.length > 0 && !lensScopeTraces.some(t => t.agent_id === lens.role) ? ['Agent role mismatch.'] : []),
+  ];
   useEffect(() => { setHighlight(titles.find(x => tasks.some(t => t.title.toLowerCase().includes(x.toLowerCase()))) ?? null); return () => setHighlight(null); }, [titles, tasks, setHighlight]);
 
   function createFinding() {
@@ -231,9 +220,9 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   }
 
   return <section className={`trace-viewer${collapsed ? ' trace-viewer--collapsed' : ''}`}>
-    <div className="trace-viewer-header"><button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(v => !v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{traces.length}/{TRACE_LIMIT}</strong></button><button className="trace-refresh-btn" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button></div>
+    <div className="trace-viewer-header"><button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(v => !v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{active.length}/{lensScopeTraces.length}</strong></button><button className="trace-refresh-btn" onClick={clearLens}>CLEAR ALL</button><button className="trace-refresh-btn" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button></div>
     {!collapsed && <div className="trace-viewer-body">
-      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{lensScopeTraces.length} filtered · {sessions.length} sessions · {anomalies.length} anomalies <button className="trace-refresh-btn" type="button" onClick={clearLens}>CLEAR ALL</button></span></div>
+      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{lensScopeTraces.length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span></div>
       {error && <div className="trace-message trace-message--error">{error}</div>}
       <select value={selected} onChange={e => setSelected(e.target.value)} style={{ width: '100%', background: '#07111f', color: '#cbd5e1', fontSize: 10 }}><option value="">Select session</option>{sessions.map(s => <option key={s} value={s}>{s}</option>)}</select>
       <div style={{ display: 'flex', gap: 4, margin: '5px 0' }}><button className="trace-refresh-btn" onClick={createFinding} disabled={readOnly || !anomalies.length}>CREATE DEBUG FINDING</button><button className="trace-refresh-btn" onClick={exportBundle} disabled={!sessionTraces.length}>EXPORT</button><button className="trace-refresh-btn" onClick={() => inputRef.current?.click()}>IMPORT</button><input ref={inputRef} hidden type="file" accept="application/json" onChange={e => void importBundle(e.target.files?.[0])} /></div>
@@ -241,6 +230,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
       {anomalies.map(a => <div key={a.signature} className="trace-message trace-message--error"><strong>{a.summary}</strong><br />Hint: {a.hint}</div>)}
       {active.length === 0 && <div className="trace-empty">No traces match · use Clear all</div>}
       <div className="trace-list">{groups.map(([group, rows]) => <section key={group}><div style={{ fontSize: 9, color: '#94a3b8', margin: '5px 0' }}><LensHighlight text={group} keyword={lens.keyword} /> ({rows.length})</div>{rows.map(t => <article className="trace-card" key={t.id}><div className="trace-card-top"><span className={`trace-badge ${badge(t.trace_type)}`}>{t.trace_type}</span><strong>{t.agent_id}</strong><time>{formatKstTime(t.created_at)} KST</time></div><div className="trace-card-metrics"><span>{t.model ?? 'model —'}</span><span>{t.latency_ms ?? '—'}ms</span><span>in {t.input_tokens ?? '—'}</span><span>out {t.output_tokens ?? '—'}</span></div><p><LensHighlight text={metadataText(t.metadata)} keyword={lens.keyword} /></p></article>)}</section>)}</div>
+
       <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6 }}><strong>RELATED TASKS</strong>: {relatedTasks.map(t => t.title).join(' · ') || '—'}<br /><strong>EVENT LOG</strong>: {relatedEvents.map(e => e.message).join(' · ') || '—'}<br /><strong>AGENTS</strong>: {Object.values(agents).filter(a => active.some(t => t.agent_id === a.id)).map(a => `${a.id}:${a.status}`).join(' · ') || '—'}</div>
     </div>}
   </section>;

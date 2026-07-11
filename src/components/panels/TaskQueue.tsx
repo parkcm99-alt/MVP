@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
 import { includesKeyword, useLensStore } from '@/store/lensStore';
-import LensHighlight from '@/components/debug/LensHighlight';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
+import LensHighlight from '@/components/debug/LensHighlight';
 import type { AgentRole, AgentStatus, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
@@ -43,13 +43,22 @@ export default function TaskQueue() {
   const [busyRole, setBusyRole] = useState<AgentRole | null>(null);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const addLocalTrace = useDebugStore(s => s.addLocalTrace);
+  const observedTraces = useDebugStore(s => s.observedTraces);
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const lens = useLensStore(s => s.filters);
   const clearLens = useLensStore(s => s.clearAll);
+  const sessionMatches = !lens.sessionId || getSessionId().includes(lens.sessionId.trim());
   const visibleTasks = tasks.filter(t =>
+    sessionMatches &&
     (!lens.role || t.assignedTo === lens.role) &&
     (!lens.status || t.status === lens.status) &&
     (!lens.priority || t.priority === lens.priority) &&
+    (!lens.traceType || observedTraces.some(trace => {
+      const title = String(trace.metadata?.task_title ?? trace.metadata?.taskTitle ?? '').toLowerCase();
+      return trace.trace_type === lens.traceType &&
+        (!t.assignedTo || trace.agent_id === t.assignedTo) &&
+        (!title || t.title.toLowerCase().includes(title) || title.includes(t.title.toLowerCase()));
+    })) &&
     includesKeyword(`${t.title} ${t.description}`, lens.keyword)
   );
 
@@ -161,9 +170,7 @@ export default function TaskQueue() {
     <div className="panel task-queue-panel">
       <div className="panel-header">
         <span>📋 TASK QUEUE</span>
-        <span><span className="panel-badge">{visibleTasks.length}/{tasks.length}</span>{' '}
-          <button type="button" className="panel-collapse-btn" onClick={clearLens}>CLEAR ALL</button>
-        </span>
+        <span><button type="button" onClick={clearLens} className="panel-collapse-btn">CLEAR ALL</button> <span className="panel-badge">{visibleTasks.length}/{tasks.length}</span></span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, padding: '4px 6px', borderBottom: '1px solid #1e293b' }}>
         {([

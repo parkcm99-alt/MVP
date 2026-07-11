@@ -5,7 +5,9 @@ import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
 import { includesKeyword, useLensStore } from '@/store/lensStore';
+import { getSessionId } from '@/lib/supabase/session';
 import LensHighlight from '@/components/debug/LensHighlight';
+import { useDebugStore } from '@/store/debugStore';
 
 const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
   task:    { color: '#60A5FA', prefix: '[TASK]' },
@@ -26,8 +28,25 @@ export default function EventLog() {
   const [collapsed, setCollapsed] = useState(false);
   const lens = useLensStore(s => s.filters);
   const clearLens = useLensStore(s => s.clearAll);
+  const tasks = useSimStore(s => s.tasks);
+  const observedTraces = useDebugStore(s => s.observedTraces);
+  const sessionMatches = !lens.sessionId || getSessionId().includes(lens.sessionId.trim());
+  const taskScope = tasks.filter(t =>
+    (!lens.status || t.status === lens.status) &&
+    (!lens.priority || t.priority === lens.priority) &&
+    (!lens.role || t.assignedTo === lens.role)
+  );
+  const hasTaskFacet = Boolean(lens.status || lens.priority);
   const visibleEvents = events.filter(e =>
+    sessionMatches &&
     (!lens.role || e.agentId === lens.role) &&
+    (!lens.traceType || observedTraces.some(trace =>
+      trace.trace_type === lens.traceType && trace.agent_id === e.agentId
+    )) &&
+    (!hasTaskFacet || taskScope.some(t =>
+      e.message.toLowerCase().includes(t.title.toLowerCase()) ||
+      (t.assignedTo !== null && t.assignedTo === e.agentId)
+    )) &&
     includesKeyword(e.message, lens.keyword)
   );
 
@@ -55,7 +74,6 @@ export default function EventLog() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>📝 EVENT LOG</span>
           <span className="panel-badge">{visibleEvents.length}/{events.length}</span>
-          <button type="button" className="panel-collapse-btn" onClick={clearLens}>CLEAR ALL</button>
         </div>
         <button
           className="panel-collapse-btn"
@@ -63,6 +81,7 @@ export default function EventLog() {
         >
           {collapsed ? '▼ SHOW' : '▲ HIDE'}
         </button>
+        <button className="panel-collapse-btn" type="button" onClick={clearLens}>CLEAR ALL</button>
       </div>
 
       {/* body — hidden when collapsed */}

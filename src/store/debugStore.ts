@@ -42,11 +42,13 @@ interface DebugStore {
   supabaseStatus: SupabaseDebugStatus;
   planner: PlannerDebugSnapshot;
   localTraces: AgentTraceRow[];
+  observedTraces: AgentTraceRow[];
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
   recentAgentCalls: AgentCallSnapshot[];
   addLocalTrace: (trace: AgentTraceRow) => void;
+  setObservedTraces: (traces: AgentTraceRow[]) => void;
   highlightedTaskTitle: string | null;
   setHighlightedTaskTitle: (title: string | null) => void;
 }
@@ -69,6 +71,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
   planner: INITIAL_PLANNER_DEBUG,
   recentAgentCalls: [],
   localTraces: [],
+  observedTraces: [],
   highlightedTaskTitle: null,
   setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
 
@@ -115,4 +118,5 @@ export const useDebugStore = create<DebugStore>((set) => ({
     set(state => ({
       localTraces: [trace, ...state.localTraces].slice(0, 100),
     })),
+  setObservedTraces: (observedTraces) => set({ observedTraces: observedTraces.slice(0, 100) }),
 }));
