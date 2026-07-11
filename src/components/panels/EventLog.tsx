@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
-import { lensText, useOperationsLens } from '@/store/operationsLensStore';
+import { lensTextMatch, useOperationsLens } from '@/store/operationsLensStore';
+import LensHighlight from '@/components/debug/LensHighlight';
+import { getSessionId } from '@/lib/supabase/session';
 
 const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
   task:    { color: '#60A5FA', prefix: '[TASK]' },
@@ -21,8 +23,12 @@ const COLLAPSED_HEIGHT = 28; // header only
 
 export default function EventLog() {
   const events    = useSimStore(s => s.events);
-  const lens = useOperationsLens(s => s.filters);
-  const visibleEvents = events.filter(e => (!lens.role || e.agentId === lens.role) && lensText(e.message, lens.keyword));
+  const lens = useOperationsLens();
+  const filteredEvents = events.filter(e =>
+    (!lens.sessionId || getSessionId().includes(lens.sessionId)) &&
+    (!lens.role || e.agentId === lens.role) &&
+    lensTextMatch(`${e.message} ${e.agentName} ${e.type}`, lens.keyword)
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -49,7 +55,7 @@ export default function EventLog() {
       <div className="panel-header" style={{ flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>📝 EVENT LOG</span>
-          <span className="panel-badge">{visibleEvents.length}/{events.length}</span>
+          <span className="panel-badge">{filteredEvents.length}/{events.length}</span>
         </div>
         <button
           className="panel-collapse-btn"
@@ -72,12 +78,12 @@ export default function EventLog() {
             gap:           2,
           }}
         >
-          {visibleEvents.length === 0 && (
+          {filteredEvents.length === 0 && (
             <span style={{ color: '#475569', fontFamily: 'monospace', fontSize: 10 }}>
-              Waiting for events...
+              No events match. <button onClick={lens.clearAll}>Clear all</button>
             </span>
           )}
-          {visibleEvents.map(evt => {
+          {filteredEvents.map(evt => {
             const style = TYPE_STYLE[evt.type] ?? TYPE_STYLE.system;
             return (
               <div
@@ -94,7 +100,7 @@ export default function EventLog() {
               >
                 <span style={{ color: '#334155', flexShrink: 0 }}>{formatKstTime(evt.timestamp)}</span>
                 <span style={{ color: style.color, flexShrink: 0 }}>{style.prefix}</span>
-                <span style={{ color: '#CBD5E1' }}>{evt.message}</span>
+                <span style={{ color: '#CBD5E1' }}><LensHighlight text={evt.message} keyword={lens.keyword} /></span>
               </div>
             );
           })}

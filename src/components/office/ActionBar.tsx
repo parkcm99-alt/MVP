@@ -9,6 +9,7 @@ import { DESK_STAND } from '@/lib/simulation/config';
 import { getSessionId } from '@/lib/supabase/session';
 import { insertAgentTrace } from '@/lib/supabase/traces';
 import { useDebugStore } from '@/store/debugStore';
+import { useOperationsLens } from '@/store/operationsLensStore';
 import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -234,6 +235,7 @@ export default function ActionBar() {
   }, []);
 
   async function askPlanner() {
+    useOperationsLens.getState().clearAll();
     if (plannerBusy) return;
 
     const task = pickHighestPriorityTask(tasks);
@@ -392,7 +394,7 @@ export default function ActionBar() {
         </ActionBtn>
         <ActionBtn
           variant="reset"
-          onClick={() => simulationEngine.resetOffice()}
+          onClick={() => { useOperationsLens.getState().clearAll(); simulationEngine.resetOffice(); }}
           title="오피스 초기화"
         >
           ↺ Reset

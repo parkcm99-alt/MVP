@@ -23,6 +23,7 @@ export default function Page() {
       </header>
 
       <OperationsLens />
+
       {/* main body */}
       <div className="app-body">
 

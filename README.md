@@ -447,3 +447,7 @@ Debug Panel의 **Trace Correlation Debugger**는 최근 `agent_traces` 100개를
 
 ## Operations Lens
 상단 공통 필터 바에서 agent role, task status, priority, trace type, sessionId, keyword를 조합하면 Task Queue, Event Log, Trace Correlation Debugger가 같은 read-only derived view로 즉시 재계산됩니다. 각 패널은 filtered/total 수와 empty state를 표시하며 **Clear all**로 원본 데이터 변경 없이 초기화합니다. mock mode에서도 동작합니다.
+
+
+## Operations Lens
+Use the shared Operations Lens bar to combine agent role, task status, priority, trace type, session ID, and keyword filters across Task Queue, Event Log, and Trace Correlation Debugger. Each panel reports filtered/total counts, highlights keyword matches, offers empty-state clearing, and never mutates persisted data. Lens warnings are local-only and sanitized. Reset and Plan with Claude clear stale lens state.
