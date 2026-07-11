@@ -99,7 +99,7 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
 ### UI 레이아웃
 - **Top Command Area** — Work Request 입력과 주요 Action Buttons를 상단에 배치
 - **Main Simulation Area** — Pixel Office를 중앙 메인 영역으로 유지
-- **Right Control Panel** — `Tasks` / `Summary` / `Report` / `Debug` / `Traces` 탭으로 Task Queue, Full Flow Summary, Final Report, Debug Panel, Agent Trace Viewer를 분리
+- **Right Control Panel** — `Tasks` / `Summary` / `Report` / `Debug` 탭으로 구성하며 Agent Trace Viewer는 Debug Panel 안에 함께 표시
 - **Bottom Event Log** — 화면 하단 전체 폭 접이식 로그 패널, 최신 200개 렌더링 제한 유지
 - 패널 제목, 카드 여백, 버튼 간격, 로그 타입 배지를 키워 가독성을 개선
 
@@ -132,7 +132,7 @@ Planner, Architect, Developer, Reviewer, QA는 서버 전용 API route를 통해
   - **Send to Slack** / **Send to Telegram** 버튼은 서버 전용 notify route를 통해 전송. 비활성/미설정이면 Not configured 상태로 표시
   - Google Drive/Gmail/Sheets 버튼은 1차 버전에서 Coming soon 비활성 상태로 표시
 - **Debug 탭** — Supabase 상태, 마지막 LLM agent/provider, traceRecorded, model, latency/token, Google OAuth/Drive/Gmail/Sheets 상태 표시 (접기/펼치기, mock/trace 실패 경고 표시)
-- **Traces 탭** — Agent Trace Viewer에서 `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
+- **Debug Panel / Agent Trace Viewer** — `agent_traces` 최근 30개를 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
 
 ### 타입드 이벤트 버스
 `src/lib/simulation/eventBus.ts`에 8종 이벤트 정의:
@@ -744,7 +744,7 @@ src/
 | 관측성 | Supabase `agent_traces` + Agent Trace Viewer — `llm_call`/`handoff`/`decision`, AgentOps SDK는 미연동 |
 | 미래 워크플로우 | LangGraph / CrewAI — Phase 5 예정 |
 
-## Agent Trace Correlation Debugger
+## Agent Trace Viewer / Correlation Diagnostics
 
 Debug 패널은 Supabase `agent_traces`의 최신 100건을 세션별로 묶고, agent / trace type / `task_title` 기준으로 작업·이벤트·agent 상태를 상관 분석합니다. 연관된 Task Queue 카드는 노란색으로 강조됩니다.
 
