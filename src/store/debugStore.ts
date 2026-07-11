@@ -4,6 +4,7 @@ import type { LlmProvider } from '@/lib/llm/types';
 import type { RequestAnalysisMode } from '@/lib/agents/requestMode';
 import type { WorkRequestAttachment } from '@/lib/work-request/attachments';
 import type { AgentRole } from '@/types';
+import { appendLocalTrace } from '@/lib/debug/localTraces';
 
 // ── Full Flow Summary ─────────────────────────────────────────────────────────
 
@@ -145,7 +146,13 @@ export const useDebugStore = create<DebugStore>((set) => ({
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
-  recordPlannerResponse: (update) =>
+  recordPlannerResponse: (update) => {
+    appendLocalTrace({
+      agent_id: update.agentId ?? 'planner', trace_type: 'llm_call',
+      input_tokens: update.inputTokens ?? null, output_tokens: update.outputTokens ?? null,
+      latency_ms: update.latencyMs ?? null, model: update.model ?? null,
+      metadata: { provider: update.provider, traceRecorded: update.traceRecorded ?? null, source: 'local_debug' },
+    });
     set(() => {
       const snapshot = {
         agentId: update.agentId ?? 'planner',
@@ -162,9 +169,16 @@ export const useDebugStore = create<DebugStore>((set) => ({
         lastLlm: snapshot,
         traceRefreshAt: snapshot.lastPlanAt,
       };
-    }),
+    });
+  },
 
-  recordAgentResponse: (update) =>
+  recordAgentResponse: (update) => {
+    appendLocalTrace({
+      agent_id: update.agentId ?? 'planner', trace_type: 'llm_call',
+      input_tokens: update.inputTokens ?? null, output_tokens: update.outputTokens ?? null,
+      latency_ms: update.latencyMs ?? null, model: update.model ?? null,
+      metadata: { provider: update.provider, traceRecorded: update.traceRecorded ?? null, source: 'local_debug' },
+    });
     set(() => {
       const snapshot = {
         agentId: update.agentId ?? null,
@@ -180,7 +194,8 @@ export const useDebugStore = create<DebugStore>((set) => ({
         lastLlm: snapshot,
         traceRefreshAt: snapshot.lastPlanAt,
       };
-    }),
+    });
+  },
 
   refreshTraces: () => set({ traceRefreshAt: Date.now() }),
 

@@ -1847,3 +1847,21 @@ html, body {
   0%, 100% { box-shadow: 0 0 4px #22C55E; }
   50%       { box-shadow: 0 0 10px #22C55E; }
 }
+
+/* Trace Correlation Debugger */
+.trace-debug-toolbar { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:5px; }
+.trace-debug-toolbar select,.trace-debug-toolbar button,.trace-anomalies button { min-width:0; background:#07111f; color:#cbd5e1; border:1px solid #334155; border-radius:3px; padding:5px; font:9px 'Courier New',monospace; }
+.trace-debug-toolbar button,.trace-anomalies button { cursor:pointer; }
+.trace-debug-toolbar button:disabled,.trace-anomalies button:disabled { opacity:.45; cursor:not-allowed; }
+.trace-group-summary { display:flex; flex-direction:column; gap:3px; padding:6px; background:rgba(15,23,42,.7); color:#94a3b8; font-size:9px; overflow-wrap:anywhere; }
+.trace-anomalies { border:1px solid rgba(239,68,68,.45); background:rgba(127,29,29,.15); padding:7px; display:flex; flex-direction:column; gap:6px; font-size:9px; color:#fecaca; }
+.trace-anomalies>div { display:flex; gap:6px; line-height:1.35; }
+.trace-anomalies>div>b { color:#f87171; }
+.trace-anomalies small { display:block; color:#fbbf24; margin-top:2px; }
+.trace-anomalies button { align-self:flex-start; border-color:#f59e0b; color:#fde68a; }
+.trace-context { display:grid; grid-template-columns:1fr; gap:5px; }
+.trace-context>div { display:flex; flex-direction:column; gap:2px; padding:6px; border:1px solid rgba(51,65,85,.65); color:#94a3b8; font-size:9px; max-height:90px; overflow:auto; }
+.trace-context b { color:#7dd3fc; letter-spacing:.7px; margin-bottom:2px; }
+.task-card--trace-highlight { outline:2px solid #facc15 !important; box-shadow:0 0 12px rgba(250,204,21,.45); animation:trace-highlight-pulse 1.4s ease-in-out infinite; }
+@keyframes trace-highlight-pulse { 50% { outline-color:#fb923c; box-shadow:0 0 18px rgba(251,146,60,.55); } }
+.operations-lens{display:grid;grid-template-columns:auto repeat(4,minmax(80px,1fr)) minmax(100px,1fr) minmax(120px,1.4fr) auto;gap:5px;align-items:center;padding:5px 14px;background:#06101c;border-bottom:1px solid #164e63;font:9px 'Courier New',monospace;color:#67e8f9}.operations-lens select,.operations-lens input,.operations-lens button{min-width:0;background:#020617;color:#cbd5e1;border:1px solid #334155;padding:4px}.operations-lens button{color:#fbbf24;cursor:pointer}.lens-empty{padding:10px;color:#94a3b8;border:1px dashed #334155;font-size:10px}.event-log-msg mark{background:#facc15;color:#111827;padding:0 1px}

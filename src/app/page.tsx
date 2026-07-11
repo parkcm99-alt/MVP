@@ -4,6 +4,7 @@ import EventLog from '@/components/panels/EventLog';
 import RightPanel from '@/components/layout/RightPanel';
 import ConnectionStatus from '@/components/debug/ConnectionStatus';
 import RealtimeSyncClient from '@/components/RealtimeSyncClient';
+import OperationsLens from '@/components/operations/OperationsLens';
 
 export default function Page() {
   return (
@@ -22,6 +23,7 @@ export default function Page() {
 
       {/* ── Top command area: Work Request + Action Buttons ────── */}
       <ActionBar />
+      <OperationsLens />
 
       {/* ── Main body: Pixel Office  +  Right Panel ────────────── */}
       <div className="app-body">

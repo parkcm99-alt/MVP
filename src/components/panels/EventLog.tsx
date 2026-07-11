@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
+import { textMatch, useOperationsLens } from '@/store/operationsLensStore';
 
 const TYPE_STYLE: Record<EventType, { color: string; bg: string; prefix: string }> = {
   task:    { color: '#93C5FD', bg: 'rgba(37,99,235,0.18)',  prefix: 'TASK'  },
@@ -15,7 +16,9 @@ const TYPE_STYLE: Record<EventType, { color: string; bg: string; prefix: string 
 };
 
 export default function EventLog() {
-  const events    = useSimStore(s => s.events);
+  const allEvents = useSimStore(s => s.events);
+  const lens = useOperationsLens(s => s.filters);
+  const events = allEvents.filter(e => (!lens.role || e.agentId === lens.role) && textMatch(`${e.message} ${e.agentId} ${e.type}`, lens.keyword));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -31,7 +34,7 @@ export default function EventLog() {
       <div className="event-log-header">
         <div className="event-log-title">
           <span>📝 EVENT LOG</span>
-          <span className="event-log-badge">{events.length}</span>
+          <span className="event-log-badge">{events.length}/{allEvents.length}</span>
         </div>
         <button
           className="panel-collapse-btn"
@@ -46,7 +49,7 @@ export default function EventLog() {
       {!collapsed && (
         <div ref={scrollRef} className="event-log-body">
           {events.length === 0 && (
-            <span className="event-log-empty">Waiting for events...</span>
+            <span className="event-log-empty">No matching events · Clear all</span>
           )}
           {events.map(evt => {
             const s = TYPE_STYLE[evt.type] ?? TYPE_STYLE.system;
@@ -59,7 +62,7 @@ export default function EventLog() {
                 >
                   {s.prefix}
                 </span>
-                <span className="event-log-msg">{evt.message}</span>
+                <span className="event-log-msg">{lens.keyword ? evt.message.split(new RegExp(`(${lens.keyword.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')})`,'ig')).map((p,i)=>p.toLowerCase()===lens.keyword.toLowerCase()?<mark key={i}>{p}</mark>:p) : evt.message}</span>
               </div>
             );
           })}
