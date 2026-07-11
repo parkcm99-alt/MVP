@@ -18,6 +18,7 @@ const TYPE_STYLE: Record<EventType, { color: string; bg: string; prefix: string 
 export default function EventLog() {
   const allEvents = useSimStore(s => s.events);
   const lens = useOperationsLens(s => s.filters);
+  const clearLens = useOperationsLens(s => s.clear);
   const events = allEvents.filter(e => (!lens.role || e.agentId === lens.role) && textMatch(`${e.message} ${e.agentId} ${e.type}`, lens.keyword));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -49,7 +50,7 @@ export default function EventLog() {
       {!collapsed && (
         <div ref={scrollRef} className="event-log-body">
           {events.length === 0 && (
-            <span className="event-log-empty">No matching events · Clear all</span>
+            <span className="event-log-empty">No matching events · <button onClick={clearLens}>Clear all</button></span>
           )}
           {events.map(evt => {
             const s = TYPE_STYLE[evt.type] ?? TYPE_STYLE.system;

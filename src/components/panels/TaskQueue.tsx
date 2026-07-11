@@ -64,6 +64,7 @@ function buildQaSummary(result: QaAgentResponse): string {
 export default function TaskQueue() {
   const allTasks = useSimStore(s => s.tasks);
   const lens = useOperationsLens(s => s.filters);
+  const clearLens = useOperationsLens(s => s.clear);
   const tasks = allTasks.filter(t => (!lens.role || t.assignedTo === lens.role) && (!lens.status || t.status === lens.status) && (!lens.priority || t.priority === lens.priority) && textMatch(`${t.title} ${t.description} ${t.assignedTo ?? ''}`, lens.keyword));
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
@@ -580,7 +581,7 @@ export default function TaskQueue() {
         <span className="panel-badge">{tasks.length}/{allTasks.length}</span>
       </div>
 
-      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{tasks.length === 0 && <div className="lens-empty">No matching tasks · Clear all</div>}
+      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{tasks.length === 0 && <div className="lens-empty">No matching tasks · <button onClick={clearLens}>Clear all</button></div>}
         {(['in_progress', 'review', 'backlog', 'done'] as TaskStatus[]).map(status => {
           const group = grouped[status];
           if (group.length === 0) return null;

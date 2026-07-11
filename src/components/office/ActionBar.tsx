@@ -2,6 +2,7 @@
 
 import { type ChangeEvent, type MutableRefObject, useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
+import { useOperationsLens } from '@/store/operationsLensStore';
 import { assignPlannerStep } from '@/lib/agents/plannerStepAssignment';
 import { classifyWorkRequest, type RequestAnalysisMode } from '@/lib/agents/requestMode';
 import { eventBus } from '@/lib/simulation/eventBus';
@@ -910,6 +911,7 @@ export default function ActionBar() {
   }
 
   async function askPlanner() {
+    useOperationsLens.getState().clear();
     if (plannerBusy || flowBusy || plannerCooldown) return;
 
     const task = pickHighestPriorityTask(tasks);
@@ -1182,7 +1184,7 @@ export default function ActionBar() {
         </ActionBtn>
         <ActionBtn
           variant="reset"
-          onClick={() => simulationEngine.resetOffice()}
+          onClick={() => { useOperationsLens.getState().clear(); simulationEngine.resetOffice(); }}
           title="오피스 초기화"
         >
           ↺ Reset
