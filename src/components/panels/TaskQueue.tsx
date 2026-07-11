@@ -12,6 +12,7 @@ import type {
   ReviewerAgentResponse,
 } from '@/lib/llm/types';
 import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
+import { textMatch, useOperationsLens } from '@/store/operationsLensStore';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
   backlog:     { bg: '#1E293B', text: '#94A3B8', label: 'BACKLOG' },
@@ -61,7 +62,9 @@ function buildQaSummary(result: QaAgentResponse): string {
 }
 
 export default function TaskQueue() {
-  const tasks = useSimStore(s => s.tasks);
+  const allTasks = useSimStore(s => s.tasks);
+  const lens = useOperationsLens(s => s.filters);
+  const tasks = allTasks.filter(t => (!lens.role || t.assignedTo === lens.role) && (!lens.status || t.status === lens.status) && (!lens.priority || t.priority === lens.priority) && textMatch(`${t.title} ${t.description} ${t.assignedTo ?? ''}`, lens.keyword));
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
@@ -574,10 +577,10 @@ export default function TaskQueue() {
     <div className="panel">
       <div className="panel-header">
         <span>📋 TASK QUEUE</span>
-        <span className="panel-badge">{tasks.length}</span>
+        <span className="panel-badge">{tasks.length}/{allTasks.length}</span>
       </div>
 
-      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{tasks.length === 0 && <div className="lens-empty">No matching tasks · Clear all</div>}
         {(['in_progress', 'review', 'backlog', 'done'] as TaskStatus[]).map(status => {
           const group = grouped[status];
           if (group.length === 0) return null;
