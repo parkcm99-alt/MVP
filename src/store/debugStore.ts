@@ -114,6 +114,8 @@ interface DebugStore {
   setFullFlowData: (data: FullFlowSummaryData) => void;
   setRetryFailedAgent: (retryFailedAgent: (() => void) | null) => void;
   setRetryingAgent: (retryingAgent: AgentRole | null) => void;
+  highlightedTaskTitle: string | null;
+  setHighlightedTaskTitle: (title: string | null) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -138,6 +140,8 @@ export const useDebugStore = create<DebugStore>((set) => ({
   fullFlowData: null,
   retryFailedAgent: null,
   retryingAgent: null,
+  highlightedTaskTitle: null,
+  setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 

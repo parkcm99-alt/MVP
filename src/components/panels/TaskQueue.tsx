@@ -62,6 +62,7 @@ function buildQaSummary(result: QaAgentResponse): string {
 
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
+  const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const fullFlowRunning = useDebugStore(s => s.fullFlowData?.status === 'running');
@@ -591,8 +592,9 @@ export default function TaskQueue() {
                   key={task.id}
                   style={{
                     background: style.bg,
-                    border: `1px solid ${style.text}33`,
-                    borderLeft: `3px solid ${style.text}`,
+                    border: task.title === highlightedTaskTitle ? '1px solid #FACC15' : `1px solid ${style.text}33`,
+                    borderLeft: task.title === highlightedTaskTitle ? '3px solid #FACC15' : `3px solid ${style.text}`,
+                    boxShadow: task.title === highlightedTaskTitle ? '0 0 0 2px #FACC1533, 0 0 14px #FACC1544' : 'none',
                     borderRadius: 3,
                     padding: '8px 10px',
                     marginBottom: 6,

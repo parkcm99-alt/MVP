@@ -743,3 +743,11 @@ src/
 | LLM | Anthropic SDK (`@anthropic-ai/sdk`) — 5-agent route live 옵션, 기본 mock |
 | 관측성 | Supabase `agent_traces` + Agent Trace Viewer — `llm_call`/`handoff`/`decision`, AgentOps SDK는 미연동 |
 | 미래 워크플로우 | LangGraph / CrewAI — Phase 5 예정 |
+
+## Agent Trace Correlation Debugger
+
+Debug 패널은 Supabase `agent_traces`의 최신 100건을 세션별로 묶고, agent / trace type / `task_title` 기준으로 작업·이벤트·agent 상태를 상관 분석합니다. 연관된 Task Queue 카드는 노란색으로 강조됩니다.
+
+자동 탐지 항목: trace 기록 실패, handoff 후 decision 누락, Ask Agent 후 `llm_call` 누락, 10초 이상 지연, 실패 계열 `finalStatus`/`approvalStatus`. **Create Debug Finding**은 중복 signature를 막은 local-only Reviewer/QA 작업을 생성하며 Supabase에는 쓰지 않습니다.
+
+**Export Sanitized JSON**은 토큰·인증정보·secret을 재귀적으로 마스킹합니다. **Import Bundle**은 schema v1 JSON을 읽기 전용으로 열어 오프라인/로컬 분석에 사용할 수 있습니다. Supabase가 없거나 조회가 실패해도 앱은 안전하게 local analysis mode로 유지됩니다.
