@@ -57,6 +57,7 @@ export default function TaskQueue() {
       ?? tasks[0];
     const title = task?.title ?? `${role} 검토`;
     const description = task?.description ?? '현재 MVP 작업을 검토합니다.';
+    const sessionId = getSessionId();
     const previous = useSimStore.getState().agents[role];
     const previousStatus = previous.status;
     const previousTask = previous.currentTask;
@@ -71,12 +72,14 @@ export default function TaskQueue() {
       const response = await fetch(`/api/agents/${role}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskTitle: title, taskDescription: description, sessionId: getSessionId() }),
+        body: JSON.stringify({ taskTitle: title, taskDescription: description, sessionId }),
       });
       const result = await response.json() as Record<string, unknown>;
       const provider = result.provider === 'claude' ? 'claude' : 'mock';
       recordAgentResponse({
         role,
+        sessionId,
+        taskTitle: title,
         provider,
         traceRecorded: result.traceRecorded === true,
         model: typeof result.model === 'string' ? result.model : null,
@@ -102,6 +105,7 @@ export default function TaskQueue() {
       lines.forEach(message => eventBus.emit('agent.message', { agentId: role, data: { message } }));
       useSimStore.getState().setSpeech(role, summary.slice(0, 70));
     } catch {
+      recordAgentResponse({ role, sessionId, taskTitle: title, provider: 'mock', traceRecorded: false });
       eventBus.emit('agent.message', { agentId: role, data: { message: `[${role}] API 실패 · mock simulation 유지` } });
       useSimStore.getState().setSpeech(role, '호출 실패 · mock simulation 유지');
     } finally {

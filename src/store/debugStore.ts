@@ -18,11 +18,23 @@ interface PlannerDebugSnapshot {
 interface PlannerDebugUpdate {
   provider: LlmProvider;
   role?: string;
+  sessionId?: string;
+  taskTitle?: string;
   traceRecorded?: boolean | null;
   model?: string | null;
   latencyMs?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+}
+
+export interface AgentCallSnapshot {
+  id: string;
+  sessionId: string;
+  role: string;
+  taskTitle: string;
+  at: number;
+  traceRecorded: boolean;
+  latencyMs: number | null;
 }
 
 interface DebugStore {
@@ -31,6 +43,7 @@ interface DebugStore {
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
+  recentAgentCalls: AgentCallSnapshot[];
   highlightedTaskTitle: string | null;
   setHighlightedTaskTitle: (title: string | null) => void;
 }
@@ -51,6 +64,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
     ? 'connecting'
     : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
   planner: INITIAL_PLANNER_DEBUG,
+  recentAgentCalls: [],
   highlightedTaskTitle: null,
   setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
 
@@ -70,7 +84,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
       },
     }),
   recordAgentResponse: (update) =>
-    set({
+    set(state => ({
       planner: {
         provider: update.provider,
         lastPlanAt: Date.now(),
@@ -81,5 +95,16 @@ export const useDebugStore = create<DebugStore>((set) => ({
         inputTokens: update.inputTokens ?? null,
         outputTokens: update.outputTokens ?? null,
       },
-    }),
+      recentAgentCalls: update.sessionId && update.role
+        ? [{
+            id: `${Date.now()}-${update.role}`,
+            sessionId: update.sessionId,
+            role: update.role,
+            taskTitle: update.taskTitle ?? '',
+            at: Date.now(),
+            traceRecorded: update.traceRecorded === true,
+            latencyMs: update.latencyMs ?? null,
+          }, ...state.recentAgentCalls].slice(0, 30)
+        : state.recentAgentCalls,
+    })),
 }));

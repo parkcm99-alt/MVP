@@ -220,7 +220,8 @@ Supabase가 없거나 조회가 실패해도 local agent 상태 기반 trace로 
 **Export**는 schema v1 Sanitized JSON Bundle을 만들며 API key, Bearer token,
 service-role secret처럼 보이는 key/value를 `[REDACTED]` 처리합니다. **Import**는
 read-only analysis mode에서만 열리고 어떤 Supabase table에도 쓰지 않습니다. 손상된 JSON,
-필수 필드 누락, 미지원 schema version은 안전한 오류로 거부합니다. 외부 공유 전에는
+필수 필드 누락, session 불일치, 100개 초과/2MB 초과 bundle, 미지원 schema version은
+안전한 오류로 거부합니다. 외부 공유 전에는
 sanitized bundle의 내용을 한 번 더 직접 검토하세요.
 
 표시 항목은 `trace_type`, `agent_id`, `model`, `latency_ms`, `input_tokens`, `output_tokens`, `created_at`(Asia/Seoul `HH:mm:ss KST`), metadata 요약입니다. metadata는 key/token/secret/password 등 민감정보로 보이는 필드를 표시하지 않습니다.
