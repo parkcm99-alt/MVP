@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
-import { textMatch, useOperationsLens } from '@/store/operationsLensStore';
+import { eventMatchesLens, highlightParts, useOperationsLens } from '@/store/operationsLensStore';
 
 const TYPE_STYLE: Record<EventType, { color: string; bg: string; prefix: string }> = {
   task:    { color: '#93C5FD', bg: 'rgba(37,99,235,0.18)',  prefix: 'TASK'  },
@@ -17,9 +17,11 @@ const TYPE_STYLE: Record<EventType, { color: string; bg: string; prefix: string 
 
 export default function EventLog() {
   const allEvents = useSimStore(s => s.events);
+  const tasks = useSimStore(s => s.tasks);
   const lens = useOperationsLens(s => s.filters);
+  const lensTraces = useOperationsLens(s => s.traceRows);
   const clearLens = useOperationsLens(s => s.clear);
-  const events = allEvents.filter(e => (!lens.role || e.agentId === lens.role) && textMatch(`${e.message} ${e.agentId} ${e.type}`, lens.keyword));
+  const events = allEvents.filter(event => eventMatchesLens(event, lens, tasks, lensTraces));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [collapsed, setCollapsed] = useState(false);
 
@@ -63,7 +65,11 @@ export default function EventLog() {
                 >
                   {s.prefix}
                 </span>
-                <span className="event-log-msg">{lens.keyword ? evt.message.split(new RegExp(`(${lens.keyword.replace(/[.*+?^${}()|[\\]\\]/g,'\\$&')})`,'ig')).map((p,i)=>p.toLowerCase()===lens.keyword.toLowerCase()?<mark key={i}>{p}</mark>:p) : evt.message}</span>
+                <span className="event-log-msg">
+                  {highlightParts(evt.message, lens.keyword).map((part, index) =>
+                    part.match ? <mark key={index}>{part.text}</mark> : part.text,
+                  )}
+                </span>
               </div>
             );
           })}

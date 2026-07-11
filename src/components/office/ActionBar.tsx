@@ -911,7 +911,7 @@ export default function ActionBar() {
   }
 
   async function askPlanner() {
-    useOperationsLens.getState().clear();
+    useOperationsLens.getState().clearRuntime();
     if (plannerBusy || flowBusy || plannerCooldown) return;
 
     const task = pickHighestPriorityTask(tasks);
@@ -1184,7 +1184,7 @@ export default function ActionBar() {
         </ActionBtn>
         <ActionBtn
           variant="reset"
-          onClick={() => { useOperationsLens.getState().clear(); simulationEngine.resetOffice(); }}
+          onClick={() => { useOperationsLens.getState().clearRuntime(); simulationEngine.resetOffice(); }}
           title="오피스 초기화"
         >
           ↺ Reset

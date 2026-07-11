@@ -753,4 +753,6 @@ Debug 패널은 Supabase `agent_traces`의 최신 100건을 세션별로 묶고,
 **Export Sanitized JSON**은 현재 선택한 session의 전체 trace를 내보내며 토큰·인증정보·secret을 재귀적으로 마스킹합니다. **Import Bundle**은 유효한 schema v1·동일 session trace·최대 100건만 받아 읽기 전용으로 열고, 손상되거나 지원하지 않는 bundle은 안전하게 거부합니다. Import 분석 중에는 finding/task/event/trace를 Supabase에 쓰지 않습니다. Supabase가 없거나 조회가 실패해도 앱은 안전하게 local analysis mode로 유지됩니다.
 
 ### Operations Lens
-The shared Operations Lens filters tasks, events, and trace correlation views by role, status, priority, trace type, session, and keyword. Active filters persist in the browser and can be reset with **Clear all**; counts show visible/total records and empty states explain when no records match.
+상단 **Operations Lens**에서 agent role, task status, priority, trace type, session ID, keyword를 함께 조합하면 Task Queue, Event Log, Trace Correlation Debugger에 같은 조건이 즉시 적용됩니다. 각 패널은 `filtered/total` 개수, keyword 하이라이트, 빈 결과 안내와 **Clear all**을 제공합니다. status/priority는 연결된 task, trace type/session은 `task_title`로 연결된 trace를 기준으로 event와 task까지 교차 필터링합니다.
+
+Lens는 원본 task/event/trace 배열과 Supabase schema를 수정하지 않는 read-only derived view입니다. **Reset** 또는 **Plan with Claude**를 시작하면 필터와 런타임 trace snapshot을 비우고 현재 세션 데이터로 다시 계산합니다. 선택 결과 사이에 관련 event/trace가 없거나 session/agent가 맞지 않으면 Trace Correlation의 local-only **Lens warnings**에 요약되며 credential/API key 값은 포함하지 않습니다. Supabase 미설정·조회 실패·mock mode에서도 local trace fallback으로 계속 사용할 수 있습니다.

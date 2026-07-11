@@ -86,9 +86,11 @@ export default function RightPanel() {
         )}
 
         {/* Traces — Agent Trace Viewer */}
-        {activeTab === 'traces' && (
+        {/* Keep mounted so its read-only trace snapshot can drive the shared lens
+            even while the operator is looking at Tasks or Debug. */}
+        <div hidden={activeTab !== 'traces'}>
           <AgentTraceViewer refreshKey={refreshKey} />
-        )}
+        </div>
 
       </div>
     </aside>

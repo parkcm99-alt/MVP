@@ -1865,3 +1865,5 @@ html, body {
 .task-card--trace-highlight { outline:2px solid #facc15 !important; box-shadow:0 0 12px rgba(250,204,21,.45); animation:trace-highlight-pulse 1.4s ease-in-out infinite; }
 @keyframes trace-highlight-pulse { 50% { outline-color:#fb923c; box-shadow:0 0 18px rgba(251,146,60,.55); } }
 .operations-lens{display:grid;grid-template-columns:auto repeat(4,minmax(80px,1fr)) minmax(100px,1fr) minmax(120px,1.4fr) auto;gap:5px;align-items:center;padding:5px 14px;background:#06101c;border-bottom:1px solid #164e63;font:9px 'Courier New',monospace;color:#67e8f9}.operations-lens select,.operations-lens input,.operations-lens button{min-width:0;background:#020617;color:#cbd5e1;border:1px solid #334155;padding:4px}.operations-lens button{color:#fbbf24;cursor:pointer}.lens-empty{padding:10px;color:#94a3b8;border:1px dashed #334155;font-size:10px}.event-log-msg mark{background:#facc15;color:#111827;padding:0 1px}
+.panel-body mark,.trace-card mark{background:#facc15;color:#111827;padding:0 1px}
+.operations-lens button:disabled{opacity:.45;cursor:not-allowed}

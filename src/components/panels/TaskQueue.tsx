@@ -12,7 +12,7 @@ import type {
   ReviewerAgentResponse,
 } from '@/lib/llm/types';
 import type { AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
-import { textMatch, useOperationsLens } from '@/store/operationsLensStore';
+import { highlightParts, taskMatchesLens, useOperationsLens } from '@/store/operationsLensStore';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
   backlog:     { bg: '#1E293B', text: '#94A3B8', label: 'BACKLOG' },
@@ -64,8 +64,9 @@ function buildQaSummary(result: QaAgentResponse): string {
 export default function TaskQueue() {
   const allTasks = useSimStore(s => s.tasks);
   const lens = useOperationsLens(s => s.filters);
+  const lensTraces = useOperationsLens(s => s.traceRows);
   const clearLens = useOperationsLens(s => s.clear);
-  const tasks = allTasks.filter(t => (!lens.role || t.assignedTo === lens.role) && (!lens.status || t.status === lens.status) && (!lens.priority || t.priority === lens.priority) && textMatch(`${t.title} ${t.description} ${t.assignedTo ?? ''}`, lens.keyword));
+  const tasks = allTasks.filter(task => taskMatchesLens(task, lens, lensTraces));
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const refreshTraces = useDebugStore(s => s.refreshTraces);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
@@ -609,7 +610,9 @@ export default function TaskQueue() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{ fontSize: 11, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
-                      {task.title}
+                      {highlightParts(task.title, lens.keyword).map((part, index) =>
+                        part.match ? <mark key={index}>{part.text}</mark> : part.text,
+                      )}
                     </span>
                     <span style={{ fontSize: 9, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
                       {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
@@ -617,7 +620,9 @@ export default function TaskQueue() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{ fontSize: 10, color: '#94A3B8', fontFamily: 'monospace', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
-                      {formatDescription(task.description)}
+                      {highlightParts(formatDescription(task.description), lens.keyword).map((part, index) =>
+                        part.match ? <mark key={index}>{part.text}</mark> : part.text,
+                      )}
                     </span>
                     {task.assignedTo && (
                       <span style={{ fontSize: 10, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
