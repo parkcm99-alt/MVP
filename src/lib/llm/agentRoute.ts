@@ -21,6 +21,14 @@ function normalize(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 1000) : fallback;
 }
 
+function normalizeSessionId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const id = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+    ? id
+    : undefined;
+}
+
 function debugFields(traceRecorded: boolean, model: string | null, latencyMs: number | null,
   inputTokens: number | null, outputTokens: number | null, debugReason?: string) {
   return {
@@ -45,7 +53,7 @@ export function createAgentPost(config: AgentRouteConfig) {
 
     const taskTitle = normalize(body.taskTitle, `${config.role} task`);
     const taskDescription = normalize(body.taskDescription, 'Review the selected task.');
-    const sessionId = normalize(body.sessionId ?? body.session_id, '');
+    const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
     const liveEnabled = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase() === 'true';
     const hasKey = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 
@@ -80,12 +88,23 @@ export function createAgentPost(config: AgentRouteConfig) {
       });
     }
 
+    const traceRecorded = await insertAgentTrace({
+      sessionId,
+      agentId: config.role,
+      traceType: 'llm_call',
+      inputTokens: llm.inputTokens,
+      outputTokens: llm.outputTokens,
+      latencyMs,
+      model: llm.model,
+      metadata: { provider: 'claude', task_title: taskTitle },
+    });
+
     const parsed = parseLlmJson(llm.content);
     if (!parsed) {
       console.warn(`Claude ${config.role} response failed: json_parse_failed`);
       return Response.json({
-        ok: true, provider: 'mock', role: config.role, ...config.fallback,
-        ...debugFields(false, llm.model, latencyMs, llm.inputTokens, llm.outputTokens, 'json_parse_failed'),
+        ok: true, provider: 'claude', role: config.role, ...config.fallback,
+        ...debugFields(traceRecorded, llm.model, latencyMs, llm.inputTokens, llm.outputTokens, 'json_parse_failed'),
       });
     }
 
@@ -102,17 +121,6 @@ export function createAgentPost(config: AgentRouteConfig) {
     for (const [field, allowed] of Object.entries(config.enumValues ?? {})) {
       if (!allowed.includes(String(normalized[field] ?? ''))) normalized[field] = config.fallback[field];
     }
-
-    const traceRecorded = await insertAgentTrace({
-      sessionId: sessionId || undefined,
-      agentId: config.role,
-      traceType: 'llm_call',
-      inputTokens: llm.inputTokens,
-      outputTokens: llm.outputTokens,
-      latencyMs,
-      model: llm.model,
-      metadata: { provider: 'claude', task_title: taskTitle },
-    });
 
     return Response.json({
       ok: true, provider: 'claude', role: config.role, ...normalized,
