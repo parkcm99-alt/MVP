@@ -626,7 +626,10 @@ export default function TaskQueue() {
                     </span>
                     {task.assignedTo && (
                       <span style={{ fontSize: 10, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
-                        {ROLE_EMOJIS[task.assignedTo]} {task.assignedTo}
+                        {ROLE_EMOJIS[task.assignedTo]}{' '}
+                        {highlightParts(task.assignedTo, lens.keyword).map((part, index) =>
+                          part.match ? <mark key={index}>{part.text}</mark> : part.text,
+                        )}
                       </span>
                     )}
                   </div>

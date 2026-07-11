@@ -63,7 +63,9 @@ export default function EventLog() {
                   className="event-log-badge-type"
                   style={{ color: s.color, background: s.bg }}
                 >
-                  {s.prefix}
+                  {highlightParts(`${s.prefix} ${evt.type}`, lens.keyword).map((part, index) =>
+                    part.match ? <mark key={index}>{part.text}</mark> : part.text,
+                  )}
                 </span>
                 <span className="event-log-msg">
                   {highlightParts(evt.message, lens.keyword).map((part, index) =>
