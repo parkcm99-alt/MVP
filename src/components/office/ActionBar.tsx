@@ -10,6 +10,7 @@ import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
 import { getSessionId } from '@/lib/supabase/session';
 import { insertAgentTrace } from '@/lib/supabase/traces';
+import { appendLocalTrace } from '@/lib/debug/localTraces';
 import {
   ATTACHMENT_ACCEPT,
   MAX_ATTACHMENT_COUNT,
@@ -482,6 +483,9 @@ export default function ActionBar() {
     sessionId: string,
     analysisMode: RequestAnalysisMode,
   ): Promise<T> {
+    const traceMetadata = { action: 'ask_agent', task_title: taskTitle };
+    appendLocalTrace({ agent_id: agentId, trace_type: 'tool_use', input_tokens: null, output_tokens: null, latency_ms: null, model: null, metadata: traceMetadata, session_id: sessionId });
+    void insertAgentTrace({ sessionId, agentId, traceType: 'tool_use', metadata: traceMetadata });
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -931,6 +935,9 @@ export default function ActionBar() {
 
     try {
       const sessionId = getSessionId();
+      const traceMetadata = { action: 'ask_agent', task_title: taskTitle };
+      appendLocalTrace({ agent_id: 'planner', trace_type: 'tool_use', input_tokens: null, output_tokens: null, latency_ms: null, model: null, metadata: traceMetadata, session_id: sessionId });
+      void insertAgentTrace({ sessionId, agentId: 'planner', traceType: 'tool_use', metadata: traceMetadata });
       const response = await fetch('/api/agents/planner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
