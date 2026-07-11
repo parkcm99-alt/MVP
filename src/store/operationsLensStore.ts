@@ -91,7 +91,7 @@ export function eventMatchesLens(
 
   const linkedTraces = traces.filter(trace =>
     linkedTasks.some(task => task.title === traceTaskTitle(trace))
-    || event.message.includes(traceTaskTitle(trace)),
+    || (Boolean(traceTaskTitle(trace)) && event.message.includes(traceTaskTitle(trace))),
   );
   if (filters.traceType && !linkedTraces.some(trace => trace.trace_type === filters.traceType)) return false;
   if (filters.sessionId && !linkedTraces.some(trace => trace.session_id === filters.sessionId.trim())) return false;
