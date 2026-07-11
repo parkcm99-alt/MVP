@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
+import { insertAgentTrace } from '@/lib/supabase/traces';
+import { appendLocalTrace } from '@/lib/debug/localTraces';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
 import type {
@@ -34,6 +36,12 @@ const ROLE_EMOJIS: Record<string, string> = {
 const AGENT_BUTTON_COOLDOWN_MS = 3000;
 type TaskAiAgent = 'architect' | 'developer' | 'reviewer' | 'qa';
 type BrowserTimer = number;
+
+function recordAskTrace(agentId: TaskAiAgent, taskTitle: string, sessionId: string) {
+  const metadata = { action: 'ask_agent', task_title: taskTitle };
+  appendLocalTrace({ agent_id: agentId, trace_type: 'tool_use', input_tokens: null, output_tokens: null, latency_ms: null, model: null, metadata, session_id: sessionId });
+  void insertAgentTrace({ sessionId, agentId, traceType: 'tool_use', metadata });
+}
 
 function formatDescription(description: string): string {
   const original = description.match(/original="([^"]+)"/)?.[1];
@@ -118,6 +126,7 @@ export default function TaskQueue() {
 
     try {
       const sessionId = getSessionId();
+      recordAskTrace('architect', task.title, sessionId);
       const response = await fetch('/api/agents/architect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -223,6 +232,7 @@ export default function TaskQueue() {
 
     try {
       const sessionId = getSessionId();
+      recordAskTrace('developer', task.title, sessionId);
       const response = await fetch('/api/agents/developer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -342,6 +352,7 @@ export default function TaskQueue() {
 
     try {
       const sessionId = getSessionId();
+      recordAskTrace('reviewer', task.title, sessionId);
       const response = await fetch('/api/agents/reviewer', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -461,6 +472,7 @@ export default function TaskQueue() {
 
     try {
       const sessionId = getSessionId();
+      recordAskTrace('qa', task.title, sessionId);
       const response = await fetch('/api/agents/qa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
