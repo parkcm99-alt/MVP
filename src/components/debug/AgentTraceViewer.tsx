@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import { getSessionId } from '@/lib/supabase/session';
 import type { AgentTraceRow } from '@/lib/supabase/types';
-import type { AgentRole } from '@/types';
 import { formatKstTime } from '@/lib/time';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
@@ -80,7 +79,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
     if (queryError) { console.warn('[Supabase] agent_traces query failed:', queryError.message); const local = localTraces(); setTraces(local); setError('Trace query failed; local analysis mode.'); setStatus('error'); return; }
     const rows = (data ?? []) as AgentTraceRow[]; setTraces(rows); setSelected(s => s && rows.some(t => t.session_id === s) ? s : rows[0]?.session_id ?? ''); setStatus('ready');
   }, []);
-  useEffect(() => { void load(); }, [load, refreshKey]);
+  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load, refreshKey]);
 
   const sessions = useMemo(() => [...new Set(traces.map(t => t.session_id))], [traces]);
   const active = useMemo(() => traces.filter(t => t.session_id === selected &&
