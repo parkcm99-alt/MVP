@@ -2,85 +2,140 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
+import { getSessionId } from '@/lib/supabase/session';
 import type { AgentTraceRow } from '@/lib/supabase/types';
+import type { AgentRole } from '@/types';
 import { formatKstTime } from '@/lib/time';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import { getSessionId } from '@/lib/supabase/session';
-import { lensTextMatch, useOperationsLens } from '@/store/operationsLensStore';
-import LensHighlight from '@/components/debug/LensHighlight';
+import { includesKeyword, useLensStore } from '@/store/lensStore';
 
-interface Props { refreshKey?: number | null }
-interface Bundle { schemaVersion: 1; exportedAt: string; sessionId: string; traces: AgentTraceRow[] }
-interface Anomaly { signature: string; message: string; hint: string; owner: 'reviewer' | 'qa' }
-const LIMIT = 100;
-const SECRET = /(api.?key|authorization|bearer|credential|password|secret|service.?role|token)/i;
+type LoadState = 'idle' | 'loading' | 'ready' | 'error';
+type Anomaly = { signature: string; summary: string; hint: string; role: 'reviewer' | 'qa' };
+type Bundle = { schemaVersion: 1; exportedAt: string; sessionId: string; traces: AgentTraceRow[] };
+const TRACE_LIMIT = 100;
+const SECRET_KEY = /api.?key|authorization|bearer|credential|password|secret|service.?role|token/i;
+const SECRET_VALUE = /(?:sk-ant-|bearer\s+|eyJ[a-zA-Z0-9_-]{10,}\.)/i;
 
+function badge(type: string) {
+  return type === 'llm_call' ? 'trace-badge--llm' : type === 'handoff' ? 'trace-badge--handoff' : type === 'decision' ? 'trace-badge--decision' : type === 'tool_use' ? 'trace-badge--tool' : 'trace-badge--unknown';
+}
+function taskTitle(t: AgentTraceRow): string {
+  const m = t.metadata ?? {};
+  const value = m.task_title ?? m.taskTitle;
+  return typeof value === 'string' ? value : '';
+}
 function sanitize(value: unknown, key = ''): unknown {
-  if (SECRET.test(key)) return '[REDACTED]';
-  if (typeof value === 'string' && (/(bearer\s+[a-z0-9._-]+)/i.test(value) || /sk-ant-/i.test(value))) return '[REDACTED]';
+  if (SECRET_KEY.test(key)) return '[REDACTED]';
+  if (typeof value === 'string') return SECRET_VALUE.test(value) ? '[REDACTED]' : value.slice(0, 2000);
   if (Array.isArray(value)) return value.map(v => sanitize(v));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k,v]) => [k, sanitize(v,k)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitize(v, k)]));
   return value;
 }
-function isTraceRow(value: unknown): value is AgentTraceRow {
-  if (!value || typeof value !== 'object') return false;
-  const row = value as Partial<AgentTraceRow>;
-  return typeof row.id === 'string' && typeof row.session_id === 'string'
-    && typeof row.agent_id === 'string' && typeof row.trace_type === 'string'
-    && typeof row.created_at === 'string'
-    && (row.metadata === null || row.metadata === undefined || typeof row.metadata === 'object');
+function metadataText(metadata: AgentTraceRow['metadata']) {
+  if (!metadata) return 'metadata —';
+  return Object.entries(sanitize(metadata) as Record<string, unknown>).slice(0, 4).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v)}`).join(' · ');
 }
-function taskTitle(t: AgentTraceRow): string { const v=t.metadata?.task_title ?? t.metadata?.taskTitle; return typeof v==='string'?v:''; }
-function badge(type:string){return `trace-badge trace-badge--${type==='llm_call'?'llm':type==='handoff'?'handoff':type==='decision'?'decision':type==='tool_use'?'tool':'unknown'}`}
-function countGroups(traces:AgentTraceRow[], key:(trace:AgentTraceRow)=>string):string[]{const counts=new Map<string,number>();for(const trace of traces){const k=key(trace);counts.set(k,(counts.get(k)??0)+1)}return [...counts].map(([k,v])=>`${k}:${v}`)}
-function anomalies(traces: AgentTraceRow[], call: ReturnType<typeof useDebugStore.getState>['planner']): Anomaly[] {
-  const out: Anomaly[]=[]; const hasDecision=new Set(traces.filter(t=>t.trace_type==='decision').map(taskTitle));
-  for(const t of traces){
-    const title=taskTitle(t);
-    if(t.trace_type==='handoff' && t.agent_id==='planner' && title && !hasDecision.has(title)) out.push({signature:`handoff:${title}`,message:`Planner handoff 뒤 decision 누락: ${title}`,hint:'담당 agent workflow 시작과 decision insert를 확인하세요.',owner:'reviewer'});
-    if((t.latency_ms??0)>=10000) out.push({signature:`latency:${t.id}`,message:`LLM 지연 ${t.latency_ms}ms: ${t.agent_id}`,hint:'timeout, provider 상태, 모델 설정을 확인하세요.',owner:'qa'});
-    const status=String(t.metadata?.finalStatus ?? t.metadata?.approvalStatus ?? '').toLowerCase();
-    if(/failed|changes_requested|needs_more/.test(status)) out.push({signature:`status:${t.id}:${status}`,message:`실패 계열 상태 감지: ${status}`,hint:'관련 task를 reviewer/QA로 재검증하세요.',owner:'qa'});
+function anomaliesFor(traces: AgentTraceRow[]): Anomaly[] {
+  const sorted = [...traces].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+  const out: Anomaly[] = [];
+  for (const [i, t] of sorted.entries()) {
+    const m = t.metadata ?? {};
+    if (m.traceRecorded === false) out.push({ signature: `trace-false:${t.id}`, summary: `${t.agent_id} trace가 기록되지 않았습니다.`, hint: 'Supabase 설정과 service role 권한을 확인하세요.', role: 'reviewer' });
+    if ((t.latency_ms ?? 0) >= 10000) out.push({ signature: `latency:${t.id}`, summary: `${t.agent_id} 호출 지연이 10초 이상입니다.`, hint: 'timeout, 모델 가용성, 네트워크 상태를 확인하세요.', role: 'qa' });
+    const status = String(m.finalStatus ?? m.final_status ?? m.approvalStatus ?? m.approval_status ?? '').toLowerCase();
+    if (['failed', 'changes_requested', 'needs_more_info', 'needs_more_testing'].includes(status)) out.push({ signature: `status:${t.id}:${status}`, summary: `${t.agent_id} 결과가 ${status} 상태입니다.`, hint: '권장 변경 또는 실패 테스트를 후속 task로 추적하세요.', role: 'reviewer' });
+    if (t.trace_type === 'handoff' && !sorted.slice(i + 1).some(n => n.trace_type === 'decision' && (!taskTitle(t) || taskTitle(n) === taskTitle(t)))) out.push({ signature: `handoff:${t.id}`, summary: `${t.agent_id} handoff 뒤 decision이 없습니다.`, hint: '대상 agent의 task 시작과 decision trace 기록을 확인하세요.', role: 'qa' });
+    const action = String(m.action ?? m.event ?? '').toLowerCase();
+    if ((m.askAgent === true || action.includes('ask_agent')) && !sorted.slice(i + 1).some(n => n.trace_type === 'llm_call' && n.agent_id === t.agent_id)) out.push({ signature: `ask:${t.id}`, summary: `${t.agent_id} Ask Agent 뒤 llm_call이 없습니다.`, hint: 'API route 응답과 ENABLE_LIVE_LLM fallback 상태를 확인하세요.', role: 'reviewer' });
   }
-  if(call.sessionId && traces.some(t=>t.session_id===call.sessionId) && (call.traceRecorded===false || !traces.some(t=>t.trace_type==='llm_call' && t.agent_id===(call.role??'planner')))) out.push({signature:`missing-call:${call.sessionId}:${call.role}`,message:`Ask ${call.role ?? 'Agent'} 호출의 llm_call/trace 기록 누락`,hint:'ENABLE_LIVE_LLM, service role key, RLS와 Vercel logs를 확인하세요.',owner:'reviewer'});
-  return [...new Map(out.map(a=>[a.signature,a])).values()];
+  return out;
+}
+function localTraces(): AgentTraceRow[] {
+  const now = new Date().toISOString();
+  return Object.values(useSimStore.getState().agents).filter(a => a.currentTask).map((a, i) => ({ id: `local-${a.id}-${i}`, session_id: getSessionId(), agent_id: a.id, trace_type: 'decision', input_tokens: null, output_tokens: null, latency_ms: null, model: 'local', metadata: { task_title: a.currentTask, status: a.status, source: 'local' }, created_at: now }));
 }
 
-export default function AgentTraceViewer({refreshKey=null}:Props){
-  const [collapsed,setCollapsed]=useState(false); const [traces,setTraces]=useState<AgentTraceRow[]>([]);
-  const [selected,setSelected]=useState(''); const [error,setError]=useState<string|null>(null); const [imported,setImported]=useState(false);
-  const input=useRef<HTMLInputElement>(null); const tasks=useSimStore(s=>s.tasks); const events=useSimStore(s=>s.events); const agents=useSimStore(s=>s.agents);
-  const debug=useDebugStore(s=>s.planner); const setHighlight=useDebugStore(s=>s.setHighlightedTaskId);
-  const lens=useOperationsLens();
-  const load=useCallback(async()=>{const local=()=>useSimStore.getState().events.slice(0,LIMIT).map((e,i):AgentTraceRow=>({id:`local-${e.id}`,session_id:getSessionId(),agent_id:e.agentId,trace_type:e.type==='planning'?'llm_call':e.type==='task'?'decision':'tool_use',input_tokens:null,output_tokens:null,latency_ms:null,model:'local-mock',metadata:{task_title:e.message.slice(0,80),source:'local_event'},created_at:new Date(e.timestamp+i).toISOString()})); const sb=getSupabaseClient(); if(!sb){setTraces(local());setImported(false);setError('Supabase unavailable — local/mock analysis mode');return;} const {data,error:e}=await sb.from('agent_traces').select('id,session_id,agent_id,trace_type,input_tokens,output_tokens,latency_ms,model,metadata,created_at').order('created_at',{ascending:false}).limit(LIMIT); if(e){setTraces(local());setImported(false);setError('Trace query failed — local/mock analysis mode');return;} setTraces((data??[]) as AgentTraceRow[]); setImported(false); setError(null);},[]);
-  useEffect(()=>{void load()},[load,refreshKey]);
-  const sessions=useMemo(()=>[...new Set(traces.map(t=>t.session_id))],[traces]);
-  useEffect(()=>{if(!selected&&sessions[0])setSelected(sessions[0])},[sessions,selected]);
-  const current=useMemo(()=>traces.filter(t=>t.session_id===selected),[traces,selected]);
-  const visible=useMemo(()=>current.filter(t=>(!lens.role||t.agent_id===lens.role)&&(!lens.traceType||t.trace_type===lens.traceType)&&(!lens.sessionId||t.session_id.includes(lens.sessionId))&&(!lens.status||String(t.metadata?.status??t.metadata?.finalStatus??t.metadata?.approvalStatus??'')===lens.status)&&(!lens.priority||String(t.metadata?.priority??'')===lens.priority)&&lensTextMatch(`${t.agent_id} ${t.trace_type} ${taskTitle(t)} ${t.model??''}`,lens.keyword)),[current,lens]);
-  const issues=useMemo(()=>anomalies(visible,debug),[visible,debug]);
-  const groups=useMemo(()=>({agents:countGroups(visible,t=>t.agent_id),types:countGroups(visible,t=>t.trace_type),tasks:countGroups(visible,t=>taskTitle(t)||'(none)').slice(0,6)}),[visible]);
-  const relatedTitles=useMemo(()=>new Set(visible.map(taskTitle).filter(Boolean)),[visible]);
-  const relatedTasks=useMemo(()=>tasks.filter(t=>relatedTitles.has(t.title)||[...relatedTitles].some(x=>t.description.includes(x))),[tasks,relatedTitles]);
-  const relatedEvents=useMemo(()=>events.filter(e=>[...relatedTitles].some(x=>e.message.includes(x))||visible.some(t=>e.agentId===t.agent_id)).slice(0,8),[events,relatedTitles,visible]);
-  const lensWarnings=useMemo(()=>{const w:string[]=[];if(relatedTasks.length&&!relatedEvents.length)w.push('Matching task has no related event.');if(relatedTasks.length&&!visible.length)w.push('Matching task has no related trace.');if(lens.sessionId&&selected&&!selected.includes(lens.sessionId))w.push('Selected trace session does not match sessionId filter.');if(lens.role&&visible.some(t=>t.agent_id!==lens.role))w.push('Agent role mismatch detected.');return w},[relatedTasks,relatedEvents,visible,lens.sessionId,lens.role,selected]);
-  useEffect(()=>{setHighlight(relatedTasks[0]?.id??null); return()=>setHighlight(null)},[relatedTasks,setHighlight]);
-  function createFinding(){if(imported||!issues[0])return; const sig=`[debug-finding:${selected}:${issues[0].signature}]`; if(tasks.some(t=>t.description.includes(sig)))return; const role=issues[0].owner; useSimStore.getState().addLocalTask({title:`Trace finding: ${role}`,description:`${sig} ${issues[0].message}`,assignedTo:role,status:'backlog',priority:'high'}); const a=agents[role]; useSimStore.getState().addEvent({agentId:role,agentName:a.name,agentColor:a.primaryColor,type:'review',message:`[${a.name}] Debug finding 생성: ${issues[0].message}`});}
-  function exportBundle(){const bundle:Bundle={schemaVersion:1,exportedAt:new Date().toISOString(),sessionId:selected,traces:current}; const blob=new Blob([JSON.stringify(sanitize(bundle),null,2)],{type:'application/json'}); const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`trace-${selected.slice(0,8)}.sanitized.json`;a.click();URL.revokeObjectURL(a.href)}
-  async function importBundle(file:File){try{const raw=JSON.parse(await file.text()) as Partial<Bundle>; if(raw.schemaVersion!==1||!Array.isArray(raw.traces)||!raw.traces.every(isTraceRow)||typeof raw.sessionId!=='string')throw new Error(); const clean=sanitize(raw) as Bundle; setTraces(clean.traces.slice(0,LIMIT));setSelected(clean.sessionId);setImported(true);setError('Read-only imported bundle — no database writes.');}catch{setError('Invalid or unsupported sanitized bundle.');}}
-  return <section className={`trace-viewer${collapsed?' trace-viewer--collapsed':''}`}><div className="trace-viewer-header"><button className="trace-viewer-toggle" onClick={()=>setCollapsed(v=>!v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{traces.length}/{LIMIT}</strong></button><button className="trace-refresh-btn" onClick={()=>void load()}>REFRESH</button></div>{!collapsed&&<div className="trace-viewer-body">
-    {error&&<div className="trace-message">{error}</div>}
-    <select value={selected} onChange={e=>setSelected(e.target.value)} style={{width:'100%',background:'#0f172a',color:'#cbd5e1'}}>{sessions.map(s=><option key={s}>{s}</option>)}</select>
-    <div style={{display:'flex',gap:4,flexWrap:'wrap',margin:'6px 0'}}><button className="trace-refresh-btn" disabled={!selected} onClick={exportBundle}>EXPORT SANITIZED JSON</button><button className="trace-refresh-btn" onClick={()=>input.current?.click()}>IMPORT</button><input ref={input} type="file" accept="application/json" hidden onChange={e=>e.target.files?.[0]&&void importBundle(e.target.files[0])}/><button className="trace-refresh-btn" disabled={imported||!issues.length} onClick={createFinding}>CREATE DEBUG FINDING</button></div>
-    <div className="trace-viewer-meta"><span>{visible.length}/{current.length} traces · {relatedTasks.length} tasks · {relatedEvents.length} events</span><span>{imported?'READ-ONLY IMPORT':'LIVE/LOCAL'}</span></div>
-    {!visible.length&&<div className="trace-message">No traces match. <button onClick={lens.clearAll}>Clear all</button></div>}
-    {lensWarnings.map(w=><div key={w} className="trace-message">Lens warning: {w}</div>)}
-    <div style={{fontSize:8,color:'#94a3b8'}}>AGENT {groups.agents.join(' · ')}<br/>TYPE {groups.types.join(' · ')}<br/>TASK {groups.tasks.join(' · ')}</div>
-    {issues.map(a=><div key={a.signature} style={{borderLeft:'3px solid #ef4444',padding:'4px',margin:'3px 0',fontSize:9}}><b>{a.message}</b><br/><span>{a.hint}</span></div>)}
-    {relatedTasks.map(t=><div key={t.id} style={{fontSize:9,color:'#facc15'}}>TASK ↗ {t.title} ({t.status})</div>)}
-    {relatedEvents.map(e=><div key={e.id} style={{fontSize:8,color:'#94a3b8'}}>EVENT {formatKstTime(e.timestamp)} {e.message}</div>)}
-    <div style={{fontSize:9,margin:'5px 0'}}>AGENTS {Object.values(agents).map(a=>`${a.name}:${a.status}`).join(' · ')}</div>
-    <div className="trace-list">{visible.map(t=><article className="trace-card" key={t.id}><div className="trace-card-top"><span className={badge(t.trace_type)}>{t.trace_type}</span><strong>{t.agent_id}</strong><time>{formatKstTime(t.created_at)} KST</time></div><div className="trace-card-metrics"><span>{t.model??'model —'}</span><span>{t.latency_ms??'—'}ms</span><span><LensHighlight text={taskTitle(t)||'task —'} keyword={lens.keyword}/></span></div></article>)}</div>
-  </div>}</section>
+export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: number | null }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [status, setStatus] = useState<LoadState>('idle');
+  const [traces, setTraces] = useState<AgentTraceRow[]>([]);
+  const [selected, setSelected] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [readOnly, setReadOnly] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const tasks = useSimStore(s => s.tasks);
+  const events = useSimStore(s => s.events);
+  const agents = useSimStore(s => s.agents);
+  const addLocalTask = useSimStore(s => s.addLocalTask);
+  const addEvent = useSimStore(s => s.addEvent);
+  const setHighlight = useDebugStore(s => s.setHighlightedTaskTitle);
+  const lens = useLensStore(s => s.filters);
+
+  const load = useCallback(async () => {
+    setStatus('loading'); setError(null); setReadOnly(false);
+    const supabase = getSupabaseClient();
+    if (!supabase) { const local = localTraces(); setTraces(local); setSelected(local[0]?.session_id ?? getSessionId()); setStatus('ready'); return; }
+    const { data, error: queryError } = await supabase.from('agent_traces').select('id,session_id,agent_id,trace_type,input_tokens,output_tokens,latency_ms,model,metadata,created_at').order('created_at', { ascending: false }).limit(TRACE_LIMIT);
+    if (queryError) { console.warn('[Supabase] agent_traces query failed:', queryError.message); const local = localTraces(); setTraces(local); setError('Trace query failed; local analysis mode.'); setStatus('error'); return; }
+    const rows = (data ?? []) as AgentTraceRow[]; setTraces(rows); setSelected(s => s && rows.some(t => t.session_id === s) ? s : rows[0]?.session_id ?? ''); setStatus('ready');
+  }, []);
+  useEffect(() => { void load(); }, [load, refreshKey]);
+
+  const sessions = useMemo(() => [...new Set(traces.map(t => t.session_id))], [traces]);
+  const active = useMemo(() => traces.filter(t => t.session_id === selected &&
+    (!lens.sessionId || t.session_id.includes(lens.sessionId)) &&
+    (!lens.role || t.agent_id === lens.role) &&
+    (!lens.traceType || t.trace_type === lens.traceType) &&
+    includesKeyword(`${taskTitle(t)} ${JSON.stringify(t.metadata ?? {})}`, lens.keyword)
+  ), [traces, selected, lens]);
+  const anomalies = useMemo(() => anomaliesFor(active), [active]);
+  const titles = useMemo(() => [...new Set(active.map(taskTitle).filter(Boolean))], [active]);
+  const relatedTasks = tasks.filter(t => titles.some(x => t.title.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(t.title.toLowerCase())));
+  const relatedEvents = events.filter(e => titles.some(x => e.message.toLowerCase().includes(x.toLowerCase())) || active.some(t => e.agentId === t.agent_id)).slice(0, 8);
+  const lensWarnings = [
+    ...(relatedTasks.length > 0 && relatedEvents.length === 0 ? ['Matching task has no related event.'] : []),
+    ...(relatedTasks.length > 0 && active.length === 0 ? ['Matching task has no related trace.'] : []),
+    ...(lens.sessionId && selected && !selected.includes(lens.sessionId) ? ['SessionId mismatch.'] : []),
+  ];
+  useEffect(() => { setHighlight(titles.find(x => tasks.some(t => t.title.toLowerCase().includes(x.toLowerCase()))) ?? null); return () => setHighlight(null); }, [titles, tasks, setHighlight]);
+
+  function createFinding() {
+    if (readOnly || !anomalies[0]) return;
+    const a = anomalies[0]; const key = `trace-finding:${selected}:${a.signature}`;
+    if (localStorage.getItem(key)) { setError('동일한 session/anomaly finding이 이미 있습니다.'); return; }
+    addLocalTask({ title: `Trace finding: ${a.summary}`.slice(0, 40), description: `${a.summary} ${a.hint} [local-only]`, assignedTo: a.role, status: 'backlog', priority: 'high' });
+    addEvent({ agentId: a.role, agentName: a.role === 'qa' ? 'QA' : 'Reviewer', agentColor: '#F59E0B', type: 'review', message: `[Trace Debug] ${a.summary}` });
+    localStorage.setItem(key, '1');
+  }
+  function exportBundle() {
+    const bundle = sanitize({ schemaVersion: 1, exportedAt: new Date().toISOString(), sessionId: selected, traces: active }) as Bundle;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `trace-${selected || 'session'}.sanitized.json`; a.click(); URL.revokeObjectURL(url);
+  }
+  async function importBundle(file?: File) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as Partial<Bundle>;
+      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.traces) || typeof parsed.sessionId !== 'string') throw new Error('unsupported');
+      const safe = sanitize(parsed.traces) as AgentTraceRow[];
+      if (!safe.every(t => t && typeof t.id === 'string' && typeof t.session_id === 'string' && typeof t.trace_type === 'string')) throw new Error('invalid');
+      setTraces(safe); setSelected(parsed.sessionId); setReadOnly(true); setStatus('ready'); setError(null);
+    } catch { setError('손상된 JSON 또는 지원하지 않는 schema version입니다.'); }
+  }
+
+  return <section className={`trace-viewer${collapsed ? ' trace-viewer--collapsed' : ''}`}>
+    <div className="trace-viewer-header"><button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(v => !v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{traces.length}/{TRACE_LIMIT}</strong></button><button className="trace-refresh-btn" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button></div>
+    {!collapsed && <div className="trace-viewer-body">
+      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{traces.filter(t => t.session_id === selected).length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span></div>
+      {error && <div className="trace-message trace-message--error">{error}</div>}
+      <select value={selected} onChange={e => setSelected(e.target.value)} style={{ width: '100%', background: '#07111f', color: '#cbd5e1', fontSize: 10 }}><option value="">Select session</option>{sessions.map(s => <option key={s} value={s}>{s}</option>)}</select>
+      <div style={{ display: 'flex', gap: 4, margin: '5px 0' }}><button className="trace-refresh-btn" onClick={createFinding} disabled={readOnly || !anomalies.length}>CREATE DEBUG FINDING</button><button className="trace-refresh-btn" onClick={exportBundle} disabled={!active.length}>EXPORT</button><button className="trace-refresh-btn" onClick={() => inputRef.current?.click()}>IMPORT</button><input ref={inputRef} hidden type="file" accept="application/json" onChange={e => void importBundle(e.target.files?.[0])} /></div>
+      {lensWarnings.map(w => <div key={w} className="trace-message trace-message--error">Lens warning: {w}</div>)}
+      {anomalies.map(a => <div key={a.signature} className="trace-message trace-message--error"><strong>{a.summary}</strong><br />Hint: {a.hint}</div>)}
+      <div style={{ fontSize: 9, color: '#94a3b8', margin: '5px 0' }}>GROUPS: {[...new Set(active.map(t => `${t.agent_id}/${t.trace_type}/${taskTitle(t) || '—'}`))].join(' · ') || '—'}</div>
+      {active.length === 0 && <div className="trace-empty">No traces match · use Clear all</div>}
+      <div className="trace-list">{active.map(t => <article className="trace-card" key={t.id}><div className="trace-card-top"><span className={`trace-badge ${badge(t.trace_type)}`}>{t.trace_type}</span><strong>{t.agent_id}</strong><time>{formatKstTime(t.created_at)} KST</time></div><div className="trace-card-metrics"><span>{t.model ?? 'model —'}</span><span>{t.latency_ms ?? '—'}ms</span><span>in {t.input_tokens ?? '—'}</span><span>out {t.output_tokens ?? '—'}</span></div><p>{metadataText(t.metadata)}</p></article>)}</div>
+      <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6 }}><strong>RELATED TASKS</strong>: {relatedTasks.map(t => t.title).join(' · ') || '—'}<br /><strong>EVENT LOG</strong>: {relatedEvents.map(e => e.message).join(' · ') || '—'}<br /><strong>AGENTS</strong>: {Object.values(agents).filter(a => active.some(t => t.agent_id === a.id)).map(a => `${a.id}:${a.status}`).join(' · ') || '—'}</div>
+    </div>}
+  </section>;
 }

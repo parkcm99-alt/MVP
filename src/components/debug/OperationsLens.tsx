@@ -1,9 +1,12 @@
 'use client';
-import { useOperationsLens, type LensFilters } from '@/store/operationsLensStore';
-const fields: Array<[keyof LensFilters,string,string[]]> = [
-  ['role','All agents',['planner','architect','developer','reviewer','qa']],
-  ['status','All statuses',['backlog','in_progress','review','done']],
-  ['priority','All priorities',['high','medium','low']],
-  ['traceType','All trace types',['llm_call','handoff','decision','tool_use']],
-];
-export default function OperationsLens(){const lens=useOperationsLens();return <div style={{display:'flex',gap:5,padding:'6px 10px',background:'#08111f',borderBottom:'1px solid #1e293b',flexWrap:'wrap',alignItems:'center',fontFamily:'monospace',fontSize:9}}><b style={{color:'#67e8f9'}}>OPERATIONS LENS</b>{fields.map(([key,label,values])=><select key={key} value={lens[key]} onChange={e=>lens.setFilter(key,e.target.value)} style={{background:'#0f172a',color:'#cbd5e1'}}><option value="">{label}</option>{values.map(v=><option key={v}>{v}</option>)}</select>)}<input value={lens.sessionId} onChange={e=>lens.setFilter('sessionId',e.target.value)} placeholder="sessionId" style={{width:120,background:'#0f172a',color:'#cbd5e1'}}/><input value={lens.keyword} onChange={e=>lens.setFilter('keyword',e.target.value)} placeholder="keyword" style={{width:130,background:'#0f172a',color:'#cbd5e1'}}/><button className="trace-refresh-btn" onClick={lens.clearAll}>CLEAR ALL</button></div>}
+import { useLensStore } from '@/store/lensStore';
+const fields = [
+  ['role','Role',['','planner','architect','developer','reviewer','qa']],
+  ['status','Task status',['','backlog','in_progress','review','done']],
+  ['priority','Priority',['','high','medium','low']],
+  ['traceType','Trace type',['','llm_call','handoff','decision','tool_use']],
+] as const;
+export default function OperationsLens() {
+ const { filters, setFilter, clear } = useLensStore();
+ return <div style={{display:'flex',gap:4,alignItems:'center',padding:'3px 8px',background:'#07111f',borderBottom:'1px solid #1e293b',fontSize:9}}><strong style={{color:'#93c5fd'}}>OPERATIONS LENS</strong>{fields.map(([key,label,opts])=><select aria-label={label} key={key} value={filters[key]} onChange={e=>setFilter(key,e.target.value)} style={{background:'#0b1728',color:'#cbd5e1',fontSize:9}}>{opts.map(v=><option key={v} value={v}>{v||label}</option>)}</select>)}<input aria-label="Session ID" placeholder="sessionId" value={filters.sessionId} onChange={e=>setFilter('sessionId',e.target.value)} style={{width:100,background:'#0b1728',color:'#cbd5e1',fontSize:9}}/><input aria-label="Keyword" placeholder="keyword" value={filters.keyword} onChange={e=>setFilter('keyword',e.target.value)} style={{width:110,background:'#0b1728',color:'#cbd5e1',fontSize:9}}/><button type="button" onClick={clear} style={{fontSize:9}}>Clear all</button></div>;
+}

@@ -5,9 +5,9 @@ import type { LlmProvider } from '@/lib/llm/types';
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
 
 interface PlannerDebugSnapshot {
-  role: string | null;
   provider: LlmProvider | null;
   lastPlanAt: number | null;
+  role: string | null;
   traceRecorded: boolean | null;
   model: string | null;
   latencyMs: number | null;
@@ -16,8 +16,8 @@ interface PlannerDebugSnapshot {
 }
 
 interface PlannerDebugUpdate {
-  role?: string;
   provider: LlmProvider;
+  role?: string;
   traceRecorded?: boolean | null;
   model?: string | null;
   latencyMs?: number | null;
@@ -30,14 +30,15 @@ interface DebugStore {
   planner: PlannerDebugSnapshot;
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
-  highlightedTaskId: string | null;
-  setHighlightedTaskId: (id: string | null) => void;
+  recordAgentResponse: (update: PlannerDebugUpdate) => void;
+  highlightedTaskTitle: string | null;
+  setHighlightedTaskTitle: (title: string | null) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
-  role: null,
   provider: null,
   lastPlanAt: null,
+  role: null,
   traceRecorded: null,
   model: null,
   latencyMs: null,
@@ -50,17 +51,30 @@ export const useDebugStore = create<DebugStore>((set) => ({
     ? 'connecting'
     : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
   planner: INITIAL_PLANNER_DEBUG,
-  highlightedTaskId: null,
-  setHighlightedTaskId: (highlightedTaskId) => set({ highlightedTaskId }),
+  highlightedTaskTitle: null,
+  setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 
   recordPlannerResponse: (update) =>
     set({
       planner: {
-        role: update.role ?? 'planner',
         provider: update.provider,
         lastPlanAt: Date.now(),
+        role: update.role ?? 'planner',
+        traceRecorded: update.traceRecorded ?? null,
+        model: update.model ?? null,
+        latencyMs: update.latencyMs ?? null,
+        inputTokens: update.inputTokens ?? null,
+        outputTokens: update.outputTokens ?? null,
+      },
+    }),
+  recordAgentResponse: (update) =>
+    set({
+      planner: {
+        provider: update.provider,
+        lastPlanAt: Date.now(),
+        role: update.role ?? null,
         traceRecorded: update.traceRecorded ?? null,
         model: update.model ?? null,
         latencyMs: update.latencyMs ?? null,

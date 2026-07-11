@@ -1,92 +1,71 @@
 import 'server-only';
 
 import { getAgentRolePrompt } from '@/lib/agents/prompts';
-import { claudeClient } from '@/lib/llm/claudeClient';
-import { mockClaude } from '@/lib/llm/mockClaude';
-import { jsonString, jsonStrings, parseLlmJson } from '@/lib/llm/json';
 import { insertAgentTrace } from '@/lib/supabase/traces';
 import type { AgentRole } from '@/types';
+import { claudeClient } from './claudeClient';
+import { parseLlmJson, stringArray, stringValue } from './json';
 
-type SupportedRole = Exclude<AgentRole, 'planner'>;
+type ConnectedRole = Exclude<AgentRole, 'planner'>;
 
-interface RouteConfig {
-  role: SupportedRole;
-  fields: Record<string, 'string' | 'strings'>;
-  defaults: Record<string, string | string[]>;
+export interface AgentRouteConfig {
+  role: ConnectedRole;
+  fields: Record<string, 'string' | 'array'>;
   nextAgents: string[];
-  prompt: string;
+  enumValues?: Record<string, string[]>;
+  fallback: Record<string, unknown>;
+  instruction: string;
 }
 
-function cleanText(value: unknown, fallback: string): string {
+function normalize(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 1000) : fallback;
 }
 
-function buildResult(config: RouteConfig, provider: 'mock' | 'claude', parsed?: Record<string, unknown>) {
-  const result: Record<string, unknown> = {
-    ok: true,
-    provider,
-    role: config.role,
+function debugFields(traceRecorded: boolean, model: string | null, latencyMs: number | null,
+  inputTokens: number | null, outputTokens: number | null, debugReason?: string) {
+  return {
+    traceRecorded,
+    model,
+    latencyMs,
+    inputTokens,
+    outputTokens,
+    ...(process.env.NODE_ENV !== 'production' && debugReason ? { debugReason } : {}),
   };
-  for (const [field, kind] of Object.entries(config.fields)) {
-    const fallback = config.defaults[field];
-    result[field] = kind === 'strings'
-      ? jsonStrings(parsed?.[field], Array.isArray(fallback) ? fallback : [String(fallback)])
-      : jsonString(parsed?.[field], Array.isArray(fallback) ? fallback.join(' ') : String(fallback));
-  }
-  if (config.role === 'reviewer' && !['approved', 'changes_requested', 'needs_more_info'].includes(String(result.approvalStatus))) {
-    result.approvalStatus = 'needs_more_info';
-  }
-  if (config.role === 'qa' && !['passed', 'failed', 'needs_more_testing'].includes(String(result.finalStatus))) {
-    result.finalStatus = 'needs_more_testing';
-  }
-  const requestedNext = jsonString(parsed?.nextAgent, config.nextAgents[0]);
-  result.nextAgent = config.nextAgents.includes(requestedNext) ? requestedNext : config.nextAgents[0];
-  return result;
 }
 
-export function createAgentPostHandler(config: RouteConfig) {
+export function createAgentPost(config: AgentRouteConfig) {
   return async function POST(request: Request) {
     let body: Record<string, unknown>;
     try {
       body = await request.json() as Record<string, unknown>;
     } catch {
-      return Response.json({ ...buildResult(config, 'mock'), ok: false }, { status: 400 });
+      return Response.json({ ok: false, provider: 'mock', role: config.role, ...config.fallback,
+        ...debugFields(false, 'mock', 0, 0, 0, 'invalid_json') }, { status: 400 });
     }
 
-    const taskTitle = cleanText(body.taskTitle, `${config.role} task`);
-    const taskDescription = cleanText(body.taskDescription, 'Review the task and recommend the safest next action.');
-    const sessionId = cleanText(body.sessionId ?? body.session_id, '');
-    const live = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase() === 'true';
+    const taskTitle = normalize(body.taskTitle, `${config.role} task`);
+    const taskDescription = normalize(body.taskDescription, 'Review the selected task.');
+    const sessionId = normalize(body.sessionId ?? body.session_id, '');
+    const liveEnabled = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase() === 'true';
     const hasKey = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 
-    if (!live || !hasKey) {
-      const mock = await mockClaude.complete({
-        agentRole: config.role,
-        messages: [{ role: 'user', content: `${taskTitle}\n${taskDescription}` }],
-        maxTokens: 240,
-      });
+    if (!liveEnabled || !hasKey) {
       return Response.json({
-        ...buildResult(config, 'mock', { summary: mock.content }),
-        traceRecorded: false,
-        model: mock.model,
-        latencyMs: mock.latencyMs,
-        inputTokens: mock.inputTokens,
-        outputTokens: mock.outputTokens,
-        ...(process.env.NODE_ENV !== 'production' ? { debugReason: !live ? 'live_disabled' : 'missing_api_key' } : {}),
+        ok: true, provider: 'mock', role: config.role, ...config.fallback,
+        ...debugFields(false, 'mock', 0, 0, 0, !liveEnabled ? 'live_disabled' : 'missing_api_key'),
       });
     }
 
-    const shape = Object.fromEntries([
-      ...Object.entries(config.fields).map(([key, kind]) => [key, kind === 'strings' ? ['string'] : 'string']),
-      ['nextAgent', config.nextAgents.join('|')],
-    ]);
+    const shape = Object.fromEntries(Object.entries(config.fields).map(([key, kind]) => [
+      key, kind === 'array' ? ['string'] : 'string',
+    ]));
     const startedAt = Date.now();
     const llm = await claudeClient.complete({
       agentRole: config.role,
       systemPrompt: [
         getAgentRolePrompt(config.role).systemPrompt,
-        config.prompt,
-        'Return raw JSON only. No markdown, code fences, commentary, or text outside JSON.',
+        config.instruction,
+        'Return raw JSON only: no markdown, code fences, or surrounding explanation.',
         `Required shape: ${JSON.stringify(shape)}`,
       ].join('\n'),
       messages: [{ role: 'user', content: `Task title: ${taskTitle}\nTask description: ${taskDescription}` }],
@@ -96,18 +75,34 @@ export function createAgentPostHandler(config: RouteConfig) {
 
     if (llm.provider !== 'claude') {
       return Response.json({
-        ...buildResult(config, 'mock', { summary: llm.content }),
-        traceRecorded: false,
-        model: llm.model,
-        latencyMs,
-        inputTokens: llm.inputTokens,
-        outputTokens: llm.outputTokens,
-        ...(process.env.NODE_ENV !== 'production' ? { debugReason: llm.fallbackReason ?? 'provider_fallback' } : {}),
+        ok: true, provider: 'mock', role: config.role, ...config.fallback,
+        ...debugFields(false, llm.model, latencyMs, llm.inputTokens, llm.outputTokens, llm.fallbackReason),
       });
     }
 
     const parsed = parseLlmJson(llm.content);
-    if (!parsed) console.warn(`Claude ${config.role} response: json_parse_failed`);
+    if (!parsed) {
+      console.warn(`Claude ${config.role} response failed: json_parse_failed`);
+      return Response.json({
+        ok: true, provider: 'mock', role: config.role, ...config.fallback,
+        ...debugFields(false, llm.model, latencyMs, llm.inputTokens, llm.outputTokens, 'json_parse_failed'),
+      });
+    }
+
+    const normalized: Record<string, unknown> = {};
+    for (const [key, kind] of Object.entries(config.fields)) {
+      normalized[key] = kind === 'array'
+        ? stringArray(parsed[key], config.fallback[key] as string[])
+        : stringValue(parsed[key], String(config.fallback[key] ?? ''));
+    }
+    const nextAgent = String(normalized.nextAgent ?? '');
+    if (config.nextAgents.length && !config.nextAgents.includes(nextAgent)) {
+      normalized.nextAgent = config.fallback.nextAgent;
+    }
+    for (const [field, allowed] of Object.entries(config.enumValues ?? {})) {
+      if (!allowed.includes(String(normalized[field] ?? ''))) normalized[field] = config.fallback[field];
+    }
+
     const traceRecorded = await insertAgentTrace({
       sessionId: sessionId || undefined,
       agentId: config.role,
@@ -118,14 +113,10 @@ export function createAgentPostHandler(config: RouteConfig) {
       model: llm.model,
       metadata: { provider: 'claude', task_title: taskTitle },
     });
+
     return Response.json({
-      ...buildResult(config, parsed ? 'claude' : 'mock', parsed ?? { summary: llm.content }),
-      traceRecorded,
-      model: llm.model,
-      latencyMs,
-      inputTokens: llm.inputTokens,
-      outputTokens: llm.outputTokens,
-      ...(process.env.NODE_ENV !== 'production' && !parsed ? { debugReason: 'json_parse_failed' } : {}),
+      ok: true, provider: 'claude', role: config.role, ...normalized,
+      ...debugFields(traceRecorded, llm.model, latencyMs, llm.inputTokens, llm.outputTokens),
     });
   };
 }

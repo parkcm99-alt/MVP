@@ -64,15 +64,11 @@ export default function DebugPanel() {
           <div className="debug-row">
             <span>LLM provider</span>
             <strong className={getProviderClass(planner.provider)}>
-              {planner.provider ?? '—'}
+              {planner.provider ? `${planner.role ?? 'agent'} · ${planner.provider}` : '—'}
             </strong>
           </div>
           <div className="debug-row">
-            <span>Last agent</span>
-            <strong>{planner.role ?? '—'}</strong>
-          </div>
-          <div className="debug-row">
-            <span>Last Plan</span>
+            <span>Last LLM call</span>
             <strong>{planner.lastPlanAt ? formatKstTime(planner.lastPlanAt) : '—'}</strong>
           </div>
           <div className="debug-row">

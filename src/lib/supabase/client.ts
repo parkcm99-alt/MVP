@@ -36,11 +36,8 @@ function getSupabaseConfig(): { url?: string; key?: string; status: SupabaseConf
     return { url, key, status: 'invalid_url' };
   }
 
-  // Legacy anon keys are JWTs; newer projects may expose an sb_publishable_* key.
-  // Anthropic/OpenAI/service secrets must never sit in NEXT_PUBLIC_*.
-  const isLegacyAnonJwt = key.startsWith('eyJ') && key.split('.').length === 3;
-  const isPublishableKey = key.startsWith('sb_publishable_');
-  if (!isLegacyAnonJwt && !isPublishableKey) {
+  // Supabase anon keys are JWTs. Anthropic/OpenAI/service secrets must never sit in NEXT_PUBLIC_*.
+  if (!key.startsWith('eyJ') || key.split('.').length !== 3) {
     return { url, key, status: 'invalid_key' };
   }
 

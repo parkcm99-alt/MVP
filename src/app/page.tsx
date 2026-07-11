@@ -5,8 +5,8 @@ import EventLog from '@/components/panels/EventLog';
 import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 import ConnectionStatus from '@/components/debug/ConnectionStatus';
 import DebugPanel from '@/components/debug/DebugPanel';
-import RealtimeSyncClient from '@/components/RealtimeSyncClient';
 import OperationsLens from '@/components/debug/OperationsLens';
+import RealtimeSyncClient from '@/components/RealtimeSyncClient';
 
 export default function Page() {
   return (
@@ -21,7 +21,6 @@ export default function Page() {
           <span className="version">v0.2.0-alpha</span>
         </div>
       </header>
-
       <OperationsLens />
 
       {/* main body */}

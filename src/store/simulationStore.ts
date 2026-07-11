@@ -97,7 +97,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
     return newTask;
   },
 
-  // Debug findings must never be written to Supabase.
+  // Debug findings must never be persisted or broadcast.
   addLocalTask: (t) => {
     const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now() };
     set(s => ({ tasks: [...s.tasks, newTask] }));

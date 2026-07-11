@@ -1,6 +1,7 @@
 import { getAgentRolePrompt } from '@/lib/agents/prompts';
 import { claudeClient } from '@/lib/llm/claudeClient';
 import { mockClaude } from '@/lib/llm/mockClaude';
+import { parseLlmJson, stringArray } from '@/lib/llm/json';
 import { insertAgentTrace } from '@/lib/supabase/traces';
 import type { LlmResponse, PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -76,35 +77,6 @@ function withPlannerTelemetry(
   };
 }
 
-function arrayOfStrings(value: unknown, fallback: string[], allowEmpty = false): string[] {
-  if (!Array.isArray(value)) return fallback;
-  const cleaned = value
-    .filter((item): item is string => typeof item === 'string')
-    .map(item => item.trim())
-    .filter(Boolean)
-    .slice(0, 4);
-  if (allowEmpty) return cleaned;
-  return cleaned.length > 0 ? cleaned : fallback;
-}
-
-function stripMarkdownCodeFence(content: string): string {
-  const trimmed = content.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  return (fenced?.[1] ?? trimmed).trim();
-}
-
-function extractJsonObject(content: string): string {
-  const unfenced = stripMarkdownCodeFence(content);
-  const firstBrace = unfenced.indexOf('{');
-  const lastBrace = unfenced.lastIndexOf('}');
-
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    return unfenced;
-  }
-
-  return unfenced.slice(firstBrace, lastBrace + 1);
-}
-
 function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
   const fallback = safePlannerResponse({
     provider: llm.provider,
@@ -112,10 +84,11 @@ function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse
   });
 
   try {
-    const parsed = JSON.parse(extractJsonObject(llm.content)) as Record<string, unknown>;
+    const parsed = parseLlmJson(llm.content);
+    if (!parsed) throw new Error('json_parse_failed');
     const summary = normalizeText(parsed.summary, '');
-    const steps = arrayOfStrings(parsed.steps, [], true);
-    const risks = arrayOfStrings(parsed.risks, [], true).slice(0, 3);
+    const steps = stringArray(parsed.steps).slice(0, 4);
+    const risks = stringArray(parsed.risks).slice(0, 3);
     const nextAgent = normalizeText(parsed.nextAgent, '');
 
     if (!summary || steps.length === 0 || !nextAgent) {
