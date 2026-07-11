@@ -18,6 +18,7 @@ const SECRET_KEY = /api.?key|authorization|bearer|credential|password|secret|ser
 const SECRET_VALUE = /(?:sk-(?:ant-|proj-)?[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{12,}|github_pat_[a-z0-9_]{12,}|sb_(?:secret|publishable)_[a-z0-9_-]{12,}|bearer\s+\S+|eyJ[a-zA-Z0-9_-]{10,}\.)/i;
 const TRACE_TYPES = new Set(['llm_call', 'handoff', 'decision', 'tool_use']);
 
+
 function badge(type: string) {
   return type === 'llm_call' ? 'trace-badge--llm' : type === 'handoff' ? 'trace-badge--handoff' : type === 'decision' ? 'trace-badge--decision' : type === 'tool_use' ? 'trace-badge--tool' : 'trace-badge--unknown';
 }
@@ -61,11 +62,18 @@ function anomaliesFor(traces: AgentTraceRow[]): Anomaly[] {
     const status = String(m.finalStatus ?? m.final_status ?? m.approvalStatus ?? m.approval_status ?? '').toLowerCase();
     if (['failed', 'changes_requested', 'needs_more_info', 'needs_more_testing'].includes(status)) out.push({ signature: `status:${t.id}:${status}`, summary: `${t.agent_id} 결과가 ${status} 상태입니다.`, hint: '권장 변경 또는 실패 테스트를 후속 task로 추적하세요.', role: 'reviewer' });
     const target = String(m.target_agent ?? '');
-    if (t.trace_type === 'handoff' && !sorted.slice(i + 1).some(n => n.trace_type === 'decision'
+    if (t.trace_type === 'handoff' && t.agent_id === 'planner' && !sorted.slice(i + 1).some(n => n.trace_type === 'decision'
       && (!target || n.agent_id === target)
-      && (!taskTitle(t) || taskTitle(n) === taskTitle(t)))) out.push({ signature: `handoff:${t.id}`, summary: `${t.agent_id} handoff 뒤 decision이 없습니다.`, hint: '대상 agent의 task 시작과 decision trace 기록을 확인하세요.', role: 'qa' });
+      && (!taskTitle(t) || taskTitle(n) === taskTitle(t)))) out.push({ signature: `handoff:${t.id}`, summary: `Planner handoff 뒤 decision이 없습니다.`, hint: '대상 agent의 task 시작과 decision trace 기록을 확인하세요.', role: 'qa' });
+
     const action = String(m.action ?? m.event ?? '').toLowerCase();
-    if ((m.askAgent === true || action.includes('ask_agent')) && !sorted.slice(i + 1).some(n => n.trace_type === 'llm_call' && n.agent_id === t.agent_id)) out.push({ signature: `ask:${t.id}`, summary: `${t.agent_id} Ask Agent 뒤 llm_call이 없습니다.`, hint: 'API route 응답과 ENABLE_LIVE_LLM fallback 상태를 확인하세요.', role: 'reviewer' });
+    if (m.askAgent === true || action.includes('ask_agent')) {
+      const at = Date.parse(t.created_at);
+      const hasRelatedCall = sorted.some(n => n.trace_type === 'llm_call' && n.agent_id === t.agent_id &&
+        Math.abs(Date.parse(n.created_at) - at) <= 30_000 &&
+        (!taskTitle(t) || !taskTitle(n) || taskTitle(n) === taskTitle(t)));
+      if (!hasRelatedCall) out.push({ signature: `ask:${t.id}`, summary: `${t.agent_id} Ask Agent 뒤 llm_call이 없습니다.`, hint: 'API route 응답과 ENABLE_LIVE_LLM fallback 상태를 확인하세요.', role: 'reviewer' });
+    }
   }
   return out;
 }
@@ -82,6 +90,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   const [error, setError] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const findingKeysRef = useRef(new Set<string>());
   const tasks = useSimStore(s => s.tasks);
   const events = useSimStore(s => s.events);
   const agents = useSimStore(s => s.agents);
@@ -93,11 +102,24 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
 
   const load = useCallback(async () => {
     setStatus('loading'); setError(null); setReadOnly(false);
+    const local = useDebugStore.getState().localTraces;
     const supabase = getSupabaseClient();
-    if (!supabase) { const local = localTraces(); setTraces(local); setSelected(local[0]?.session_id ?? getSessionId()); setStatus('ready'); return; }
+    if (!supabase) {
+      const rows = [...local, ...localTraces()].slice(0, TRACE_LIMIT);
+      setTraces(rows); setSelected(rows[0]?.session_id ?? getSessionId()); setStatus('ready'); return;
+    }
     const { data, error: queryError } = await supabase.from('agent_traces').select('id,session_id,agent_id,trace_type,input_tokens,output_tokens,latency_ms,model,metadata,created_at').order('created_at', { ascending: false }).limit(TRACE_LIMIT);
-    if (queryError) { console.warn('[Supabase] agent_traces query failed:', queryError.message); const local = localTraces(); setTraces(local); setSelected(local[0]?.session_id ?? getSessionId()); setError('Trace query failed; local analysis mode.'); setStatus('error'); return; }
-    const rows = (data ?? []) as AgentTraceRow[]; setTraces(rows); setSelected(s => s && rows.some(t => t.session_id === s) ? s : rows[0]?.session_id ?? ''); setStatus('ready');
+    if (queryError) {
+      console.warn('[Supabase] agent_traces query failed:', queryError.message);
+      const rows = [...local, ...localTraces()].slice(0, TRACE_LIMIT);
+      setTraces(rows); setSelected(rows[0]?.session_id ?? getSessionId());
+      setError('Trace query failed; local analysis mode.'); setStatus('error'); return;
+    }
+    const rows = [...local, ...(data ?? []) as AgentTraceRow[]]
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+      .slice(0, TRACE_LIMIT);
+    setTraces(rows); setSelected(s => s && rows.some(t => t.session_id === s) ? s : rows[0]?.session_id ?? ''); setStatus('ready');
+
   }, []);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load, refreshKey]);
 
@@ -126,6 +148,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
     const grouped = new Map<string, AgentTraceRow[]>();
     for (const trace of active) {
       const key = `${trace.session_id} / ${trace.agent_id} / ${trace.trace_type} / ${taskTitle(trace) || '—'}`;
+
       grouped.set(key, [...(grouped.get(key) ?? []), trace]);
     }
     return [...grouped.entries()];
@@ -142,12 +165,18 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
 
   function createFinding() {
     if (readOnly) return;
-    const a = anomalies.find(item => !localStorage.getItem(`trace-finding:${selected}:${item.signature}`));
+    const a = anomalies.find(item => {
+      const candidate = `trace-finding:${selected}:${item.signature}`;
+      if (findingKeysRef.current.has(candidate)) return false;
+      try { return !localStorage.getItem(candidate); } catch { return true; }
+    });
     if (!a) { setError('동일한 session/anomaly finding이 이미 있습니다.'); return; }
     const key = `trace-finding:${selected}:${a.signature}`;
+    findingKeysRef.current.add(key);
+
     addLocalTask({ title: `Trace finding: ${a.summary}`.slice(0, 40), description: `${a.summary} ${a.hint} [local-only]`, assignedTo: a.role, status: 'backlog', priority: 'high' });
     addEvent({ agentId: a.role, agentName: a.role === 'qa' ? 'QA' : 'Reviewer', agentColor: '#F59E0B', type: 'review', message: `[Trace Debug] ${a.summary}` });
-    localStorage.setItem(key, '1');
+    try { localStorage.setItem(key, '1'); } catch { /* no-op */ }
   }
   function exportBundle() {
     const bundle = sanitize({ schemaVersion: 1, exportedAt: new Date().toISOString(), sessionId: selected, traces: sessionTraces }) as Bundle;
@@ -161,6 +190,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
       if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.traces) || parsed.traces.length > TRACE_LIMIT || typeof parsed.sessionId !== 'string' || !parsed.sessionId) throw new Error('unsupported');
       const safe = sanitize(parsed.traces) as AgentTraceRow[];
       if (!safe.every(t => validImportedTrace(t, parsed.sessionId!))) throw new Error('invalid');
+
       setTraces(safe); setSelected(parsed.sessionId); setReadOnly(true); setStatus('ready'); setError(null);
     } catch { setError('손상된 JSON 또는 지원하지 않는 schema version입니다.'); }
     finally { if (inputRef.current) inputRef.current.value = ''; }
@@ -169,7 +199,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   return <section className={`trace-viewer${collapsed ? ' trace-viewer--collapsed' : ''}`}>
     <div className="trace-viewer-header"><button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(v => !v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{traces.length}/{TRACE_LIMIT}</strong></button><button className="trace-refresh-btn" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button></div>
     {!collapsed && <div className="trace-viewer-body">
-      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{traces.filter(t => t.session_id === selected).length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span></div>
+      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{sessionTraces.length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span></div>
       {error && <div className="trace-message trace-message--error">{error}</div>}
       <select value={selected} onChange={e => setSelected(e.target.value)} style={{ width: '100%', background: '#07111f', color: '#cbd5e1', fontSize: 10 }}><option value="">Select session</option>{sessions.map(s => <option key={s} value={s}>{s}</option>)}</select>
       <div style={{ display: 'flex', gap: 4, margin: '5px 0' }}><button className="trace-refresh-btn" onClick={createFinding} disabled={readOnly || !anomalies.length}>CREATE DEBUG FINDING</button><button className="trace-refresh-btn" onClick={exportBundle} disabled={!sessionTraces.length}>EXPORT</button><button className="trace-refresh-btn" onClick={() => inputRef.current?.click()}>IMPORT</button><input ref={inputRef} hidden type="file" accept="application/json" onChange={e => void importBundle(e.target.files?.[0])} /></div>
@@ -177,6 +207,7 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
       {anomalies.map(a => <div key={a.signature} className="trace-message trace-message--error"><strong>{a.summary}</strong><br />Hint: {a.hint}</div>)}
       {active.length === 0 && <div className="trace-empty">No traces match · use Clear all</div>}
       <div className="trace-list">{groups.map(([group, rows]) => <section key={group}><div style={{ fontSize: 9, color: '#94a3b8', margin: '5px 0' }}>{group} ({rows.length})</div>{rows.map(t => <article className="trace-card" key={t.id}><div className="trace-card-top"><span className={`trace-badge ${badge(t.trace_type)}`}>{t.trace_type}</span><strong>{t.agent_id}</strong><time>{formatKstTime(t.created_at)} KST</time></div><div className="trace-card-metrics"><span>{t.model ?? 'model —'}</span><span>{t.latency_ms ?? '—'}ms</span><span>in {t.input_tokens ?? '—'}</span><span>out {t.output_tokens ?? '—'}</span></div><p>{metadataText(t.metadata)}</p></article>)}</section>)}</div>
+
       <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6 }}><strong>RELATED TASKS</strong>: {relatedTasks.map(t => t.title).join(' · ') || '—'}<br /><strong>EVENT LOG</strong>: {relatedEvents.map(e => e.message).join(' · ') || '—'}<br /><strong>AGENTS</strong>: {Object.values(agents).filter(a => active.some(t => t.agent_id === a.id)).map(a => `${a.id}:${a.status}`).join(' · ') || '—'}</div>
     </div>}
   </section>;

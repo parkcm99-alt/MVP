@@ -41,6 +41,7 @@ export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const [busyRole, setBusyRole] = useState<AgentRole | null>(null);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
+  const addLocalTrace = useDebugStore(s => s.addLocalTrace);
   const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
   const lens = useLensStore(s => s.filters);
   const visibleTasks = tasks.filter(t =>
@@ -76,6 +77,26 @@ export default function TaskQueue() {
       });
       const result = await response.json() as Record<string, unknown>;
       const provider = result.provider === 'claude' ? 'claude' : 'mock';
+      addLocalTrace({
+        id: `ask-${crypto.randomUUID()}`,
+        session_id: sessionId,
+        agent_id: role,
+        trace_type: 'tool_use',
+        input_tokens: null,
+        output_tokens: null,
+        latency_ms: typeof result.latencyMs === 'number' ? result.latencyMs : null,
+        model: typeof result.model === 'string' ? result.model : null,
+        metadata: {
+          action: 'ask_agent',
+          askAgent: true,
+          task_title: title,
+          provider,
+          traceRecorded: result.traceRecorded === true,
+          ...(typeof result.finalStatus === 'string' ? { finalStatus: result.finalStatus } : {}),
+          ...(typeof result.approvalStatus === 'string' ? { approvalStatus: result.approvalStatus } : {}),
+        },
+        created_at: new Date().toISOString(),
+      });
       recordAgentResponse({
         role,
         sessionId,
@@ -106,6 +127,18 @@ export default function TaskQueue() {
       useSimStore.getState().setSpeech(role, summary.slice(0, 70));
     } catch {
       recordAgentResponse({ role, sessionId, taskTitle: title, provider: 'mock', traceRecorded: false });
+      addLocalTrace({
+        id: `ask-${crypto.randomUUID()}`,
+        session_id: sessionId,
+        agent_id: role,
+        trace_type: 'tool_use',
+        input_tokens: null,
+        output_tokens: null,
+        latency_ms: null,
+        model: null,
+        metadata: { action: 'ask_agent', askAgent: true, task_title: title, traceRecorded: false },
+        created_at: new Date().toISOString(),
+      });
       eventBus.emit('agent.message', { agentId: role, data: { message: `[${role}] API 실패 · mock simulation 유지` } });
       useSimStore.getState().setSpeech(role, '호출 실패 · mock simulation 유지');
     } finally {

@@ -122,6 +122,7 @@ export function createAgentPost(config: AgentRouteConfig) {
       if (!allowed.includes(String(normalized[field] ?? ''))) normalized[field] = config.fallback[field];
     }
 
+
     return Response.json({
       ok: true, provider: 'claude', role: config.role, ...normalized,
       ...debugFields(traceRecorded, llm.model, latencyMs, llm.inputTokens, llm.outputTokens),

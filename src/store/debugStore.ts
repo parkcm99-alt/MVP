@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { getSupabaseConfigStatus } from '@/lib/supabase/client';
 import type { LlmProvider } from '@/lib/llm/types';
+import type { AgentTraceRow } from '@/lib/supabase/types';
 
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
 
@@ -40,10 +41,12 @@ export interface AgentCallSnapshot {
 interface DebugStore {
   supabaseStatus: SupabaseDebugStatus;
   planner: PlannerDebugSnapshot;
+  localTraces: AgentTraceRow[];
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
   recordPlannerResponse: (update: PlannerDebugUpdate) => void;
   recordAgentResponse: (update: PlannerDebugUpdate) => void;
   recentAgentCalls: AgentCallSnapshot[];
+  addLocalTrace: (trace: AgentTraceRow) => void;
   highlightedTaskTitle: string | null;
   setHighlightedTaskTitle: (title: string | null) => void;
 }
@@ -65,6 +68,7 @@ export const useDebugStore = create<DebugStore>((set) => ({
     : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
   planner: INITIAL_PLANNER_DEBUG,
   recentAgentCalls: [],
+  localTraces: [],
   highlightedTaskTitle: null,
   setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
 
@@ -106,5 +110,9 @@ export const useDebugStore = create<DebugStore>((set) => ({
             latencyMs: update.latencyMs ?? null,
           }, ...state.recentAgentCalls].slice(0, 30)
         : state.recentAgentCalls,
+    })),
+  addLocalTrace: (trace) =>
+    set(state => ({
+      localTraces: [trace, ...state.localTraces].slice(0, 100),
     })),
 }));

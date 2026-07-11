@@ -226,6 +226,7 @@ export default function ActionBar() {
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
   const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
+  const addLocalTrace = useDebugStore(s => s.addLocalTrace);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
 
@@ -251,15 +252,33 @@ export default function ActionBar() {
     useSimStore.getState().setStatus('planner', 'thinking');
     useSimStore.getState().setTask('planner', planningTask);
     useSimStore.getState().setSpeech('planner', pendingSpeech);
+    const sessionId = getSessionId();
 
     try {
-      const sessionId = getSessionId();
       const response = await fetch('/api/agents/planner', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
       });
       const result = await response.json() as PlannerAgentResponse;
+      addLocalTrace({
+        id: `ask-${crypto.randomUUID()}`,
+        session_id: sessionId,
+        agent_id: 'planner',
+        trace_type: 'tool_use',
+        input_tokens: null,
+        output_tokens: null,
+        latency_ms: result.latencyMs ?? null,
+        model: result.model ?? null,
+        metadata: {
+          action: 'ask_agent',
+          askAgent: true,
+          task_title: taskTitle,
+          provider: result.provider,
+          traceRecorded: result.traceRecorded ?? false,
+        },
+        created_at: new Date().toISOString(),
+      });
       recordPlannerResponse({
         provider: result.provider,
         traceRecorded: result.traceRecorded ?? false,
@@ -323,6 +342,18 @@ export default function ActionBar() {
       }, 4500);
     } catch {
       const speech = 'Planner 호출 실패. Mock simulation은 계속 동작합니다.';
+      addLocalTrace({
+        id: `ask-${crypto.randomUUID()}`,
+        session_id: sessionId,
+        agent_id: 'planner',
+        trace_type: 'tool_use',
+        input_tokens: null,
+        output_tokens: null,
+        latency_ms: null,
+        model: null,
+        metadata: { action: 'ask_agent', askAgent: true, task_title: taskTitle, traceRecorded: false },
+        created_at: new Date().toISOString(),
+      });
       recordPlannerResponse({
         provider: 'mock',
         traceRecorded: false,
