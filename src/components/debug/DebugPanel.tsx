@@ -36,7 +36,8 @@ function getTraceClass(value: boolean | null): string {
 }
 
 export default function DebugPanel() {
-  const [collapsed, setCollapsed] = useState(false);
+  // Keep the primary task workflow visible on common 1024×768 operator screens.
+  const [collapsed, setCollapsed] = useState(true);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const planner = useDebugStore(s => s.planner);
   const supabaseMeta = SUPABASE_META[supabaseStatus];

@@ -158,7 +158,7 @@ export default function TaskQueue() {
   };
 
   return (
-    <div className="panel">
+    <div className="panel task-queue-panel">
       <div className="panel-header">
         <span>📋 TASK QUEUE</span>
         <span><span className="panel-badge">{visibleTasks.length}/{tasks.length}</span>{' '}

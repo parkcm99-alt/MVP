@@ -514,6 +514,12 @@ html, body {
     #050A12;
 }
 .debug-panel--collapsed { height: 30px; }
+.task-queue-panel { min-height: 110px; }
+@media (max-height: 800px) {
+  .agent-status-panel { height: 220px; }
+  .cmd-center { height: 130px; }
+  .debug-panel:not(.debug-panel--collapsed) { height: 240px; }
+}
 .debug-panel-header {
   height: 30px;
   flex-shrink: 0;
