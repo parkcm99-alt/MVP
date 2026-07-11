@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { formatKstTime } from '@/lib/time';
 import { useDebugStore, type SupabaseDebugStatus } from '@/store/debugStore';
 import type { GoogleIntegrationStatus } from '@/lib/google/types';
+import AgentTraceViewer from './AgentTraceViewer';
 
 const SUPABASE_META: Record<SupabaseDebugStatus, { label: string; color: string }> = {
   mock:       { label: 'mock', color: '#64748B' },
@@ -40,7 +41,9 @@ export default function DebugPanel() {
   const [googleStatus, setGoogleStatus] = useState<GoogleIntegrationStatus | null>(null);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
   const lastLlm = useDebugStore(s => s.lastLlm);
+  const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
+  const refreshKey = Math.max(lastLlm.lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
   useEffect(() => {
     let active = true;
@@ -135,6 +138,7 @@ export default function DebugPanel() {
               <strong>{googleStatus?.services.sheets ?? 'mock'}</strong>
             </div>
           </div>
+          <AgentTraceViewer refreshKey={refreshKey} />
         </div>
       )}
     </section>

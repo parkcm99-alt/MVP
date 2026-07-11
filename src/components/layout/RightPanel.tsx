@@ -7,17 +7,15 @@ import WorkflowGraph from '@/components/command-center/WorkflowGraph';
 import FullFlowSummary from '@/components/debug/FullFlowSummary';
 import FinalReportPanel from '@/components/debug/FinalReportPanel';
 import DebugPanel from '@/components/debug/DebugPanel';
-import AgentTraceViewer from '@/components/debug/AgentTraceViewer';
 import { useDebugStore } from '@/store/debugStore';
 
-type Tab = 'tasks' | 'summary' | 'report' | 'debug' | 'traces';
+type Tab = 'tasks' | 'summary' | 'report' | 'debug';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'tasks',   label: 'Tasks'   },
   { id: 'summary', label: 'Summary' },
   { id: 'report',  label: 'Report'  },
   { id: 'debug',   label: 'Debug'   },
-  { id: 'traces',  label: 'Traces'  },
 ];
 
 function EmptyState({ message }: { message: string }) {
@@ -31,10 +29,7 @@ function EmptyState({ message }: { message: string }) {
 export default function RightPanel() {
   const [activeTab, setActiveTab] = useState<Tab>('tasks');
 
-  const traceRefreshAt = useDebugStore(s => s.traceRefreshAt);
-  const lastPlanAt     = useDebugStore(s => s.lastLlm.lastPlanAt);
   const fullFlowData   = useDebugStore(s => s.fullFlowData);
-  const refreshKey     = Math.max(lastPlanAt ?? 0, traceRefreshAt ?? 0) || null;
 
   return (
     <aside className="right-panel">
@@ -81,15 +76,9 @@ export default function RightPanel() {
         )}
 
         {/* Debug — Supabase / LLM status */}
-        {activeTab === 'debug' && (
+        {/* Keep mounted so the embedded Trace Viewer can feed Operations Lens. */}
+        <div hidden={activeTab !== 'debug'}>
           <DebugPanel />
-        )}
-
-        {/* Traces — Agent Trace Viewer */}
-        {/* Keep mounted so its read-only trace snapshot can drive the shared lens
-            even while the operator is looking at Tasks or Debug. */}
-        <div hidden={activeTab !== 'traces'}>
-          <AgentTraceViewer refreshKey={refreshKey} />
         </div>
 
       </div>
