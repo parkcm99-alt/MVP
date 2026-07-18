@@ -51,6 +51,30 @@ const STATUS_SCORE: Record<TaskStatus, number> = {
 const PLANNER_GENERATED_MARKER = '[planner-generated]';
 type BrowserTimer = number;
 
+function recordWorkflowTrace(
+  agentId: AgentRole,
+  traceType: 'handoff' | 'decision',
+  metadata: Record<string, unknown>,
+) {
+  const sessionId = getSessionId();
+  void insertAgentTrace({ sessionId, agentId, traceType, metadata }).then(recorded => {
+    if (recorded) return;
+    // Local fallback keeps correlation usable without Supabase and is never persisted later.
+    useDebugStore.getState().addLocalTrace({
+      id: `local-${traceType}-${crypto.randomUUID()}`,
+      session_id: sessionId,
+      agent_id: agentId,
+      trace_type: traceType,
+      input_tokens: null,
+      output_tokens: null,
+      latency_ms: null,
+      model: 'local',
+      metadata,
+      created_at: new Date().toISOString(),
+    });
+  });
+}
+
 const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
   planner: 'thinking',
   architect: 'thinking',
@@ -111,7 +135,7 @@ function createTasksFromPlannerSteps(
     assignPlannerStep(step).map(spec =>
       store.addTask({
         title: spec.title,
-        description: `${PLANNER_GENERATED_MARKER} source="${sourceTaskTitle}" response="${responseFingerprint.slice(0, 12)}" step=${index + 1} original="${spec.originalStep}"`,
+        description: `${PLANNER_GENERATED_MARKER}\nSource: ${sourceTaskTitle}\nResponse: ${responseFingerprint.slice(0, 12)} · Step ${index + 1}\nOriginal: ${spec.originalStep}`,
         assignedTo: spec.assignedTo,
         status: 'backlog',
         priority: sourcePriority,
@@ -120,14 +144,10 @@ function createTasksFromPlannerSteps(
   );
 
   createdTasks.forEach(task => {
-    void insertAgentTrace({
-      agentId: 'planner',
-      traceType: 'handoff',
-      metadata: {
-        source_agent: 'planner',
-        target_agent: task.assignedTo ?? 'planner',
-        task_title: task.title,
-      },
+    recordWorkflowTrace('planner', 'handoff', {
+      source_agent: 'planner',
+      target_agent: task.assignedTo ?? 'planner',
+      task_title: task.title,
     });
   });
 
@@ -172,14 +192,10 @@ function schedulePlannerGeneratedWorkflow(
         agentId,
         data: { task: task.title, taskId: task.id, source: 'planner-generated' },
       });
-      void insertAgentTrace({
-        agentId,
-        traceType: 'decision',
-        metadata: {
-          task_title: task.title,
-          status: 'in_progress',
-          assigned_to: agentId,
-        },
+      recordWorkflowTrace(agentId, 'decision', {
+        task_title: task.title,
+        status: 'in_progress',
+        assigned_to: agentId,
       });
       store.updateTask(task.id, { status: 'in_progress' });
     }, startDelay));
@@ -225,7 +241,7 @@ export default function ActionBar() {
   const isRunning = useSimStore(s => s.isRunning);
   const tasks = useSimStore(s => s.tasks);
   const [plannerBusy, setPlannerBusy] = useState(false);
-  const recordPlannerResponse = useDebugStore(s => s.recordPlannerResponse);
+  const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const addLocalTrace = useDebugStore(s => s.addLocalTrace);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
@@ -279,7 +295,10 @@ export default function ActionBar() {
         },
         created_at: new Date().toISOString(),
       });
-      recordPlannerResponse({
+      recordAgentResponse({
+        role: 'planner',
+        sessionId,
+        taskTitle,
         provider: result.provider,
         traceRecorded: result.traceRecorded ?? false,
         model: result.model ?? null,
@@ -354,7 +373,10 @@ export default function ActionBar() {
         metadata: { action: 'ask_agent', askAgent: true, task_title: taskTitle, traceRecorded: false },
         created_at: new Date().toISOString(),
       });
-      recordPlannerResponse({
+      recordAgentResponse({
+        role: 'planner',
+        sessionId,
+        taskTitle,
         provider: 'mock',
         traceRecorded: false,
         model: 'mock-fallback',
@@ -425,7 +447,13 @@ export default function ActionBar() {
         </ActionBtn>
         <ActionBtn
           variant="reset"
-          onClick={() => { useOperationsLens.getState().clearAll(); simulationEngine.resetOffice(); }}
+          onClick={() => {
+            useOperationsLens.getState().clearAll();
+            plannerWorkflowTimers.current.forEach(window.clearTimeout);
+            plannerWorkflowTimers.current = [];
+            generatedPlannerResponses.current.clear();
+            simulationEngine.resetOffice();
+          }}
           title="오피스 초기화"
         >
           ↺ Reset

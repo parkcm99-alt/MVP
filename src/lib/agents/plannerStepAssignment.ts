@@ -38,7 +38,7 @@ const MULTI_ROLE_PATTERNS: Array<[AgentRole, RegExp]> = [
   ['planner', /\bplanner\b|기획자|기획/i],
 ];
 
-function truncateTitle(value: string, maxLength = 24): string {
+function truncateTitle(value: string, maxLength: number): string {
   const trimmed = value.trim().replace(/\s+/g, ' ');
   if (trimmed.length <= maxLength) return trimmed;
   return `${trimmed.slice(0, maxLength - 3)}...`;
@@ -51,8 +51,10 @@ function summarizeStepForRole(step: string, role: AgentRole): string {
     .trim();
 
   const withoutLeadingRole = cleaned.replace(/^(architect|developer|reviewer|qa|planner)\s*[:/-]\s*/i, '');
-  const title = truncateTitle(withoutLeadingRole || cleaned);
-  return `${ROLE_LABELS[role]}: ${title}`;
+  const prefix = `${ROLE_LABELS[role]}: `;
+  // Keep the complete queue title near 20 characters, including its useful role prefix.
+  const title = truncateTitle(withoutLeadingRole || cleaned, Math.max(10, 24 - prefix.length));
+  return `${prefix}${title}`;
 }
 
 function findExplicitRole(step: string): AgentRole | null {

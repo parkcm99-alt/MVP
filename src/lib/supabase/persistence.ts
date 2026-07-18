@@ -44,13 +44,13 @@ export async function upsertAgent(agent: Agent): Promise<void> {
 }
 
 export async function upsertTask(task: SimTask): Promise<void> {
-  if (!isSupabaseConfigured) return;
+  if (!isSupabaseConfigured || task.localOnly) return;
   const sb = getSupabaseClient();
   if (!sb) return;
 
   const row: TaskInsert = {
     id:          task.id,
-    session_id:  getSessionId(),
+    session_id:  task.sessionId ?? getSessionId(),
     title:       task.title,
     description: task.description,
     assigned_to: task.assignedTo,

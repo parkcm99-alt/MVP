@@ -6,12 +6,12 @@
 
 ## Current MVP Status
 
-> **Production Ready** — Vercel 배포 + Supabase Realtime 동기화 완료 (2026-04)
+> **MVP 코드 검증 완료 / Production 재배포 확인 필요** — 로컬 mock, role API, correlation/Lens, lint/build를 검증했습니다. 기존 Supabase/Realtime 경로는 유지했지만, 현재 자격증명 없는 환경에서는 최신 Vercel deployment logs 및 LIVE DB를 다시 확인할 수 없었습니다.
 
 | 항목 | 상태 |
 |------|------|
-| Vercel Production 배포 | ✅ 정상 |
-| Supabase LIVE 연결 | ✅ 확인 |
+| Vercel Production 배포 | ⚠️ 기존 배포 이력 있음, 최신 deployment/log 재확인 필요 |
+| Supabase LIVE 연결 | ✅ 기존 구현 유지 (현재 로컬은 mock) |
 | events 테이블 저장 | ✅ 확인 |
 | agents 테이블 저장 | ✅ 확인 |
 | tasks 테이블 저장 | ✅ 확인 |
@@ -19,12 +19,14 @@
 | Event Log KST 시간 표시 | ✅ 확인 |
 | Event Log 표시 제한 | ✅ 200개 렌더링 제한 |
 | MOCK MODE fallback | ✅ 동작 |
-| Claude API Planner 1단계 | ✅ Production live 호출 성공 (`provider:"claude"`) |
+| Claude 역할별 API | ✅ Planner/Architect/Developer/Reviewer/QA route + 기본 mock gate |
 | Plan with Claude workflow | ✅ steps → Task Queue 자동 생성 → 담당 에이전트 처리 |
 | Planner task assignment | ✅ 역할 키워드 기반 분배 + 복수 역할 task 분리 |
 | agent_traces 기록 | ✅ `llm_call` / `handoff` / `decision` insert 경로 구현 |
 | Debug Panel | ✅ Supabase/provider/trace/token/latency 상태 표시 |
 | Agent Trace Viewer | ✅ session별 최근 100개 trace correlation/anomaly 분석 |
+| Operations Lens | ✅ Task/Event/Trace 공통 read-only 필터 + Lens warnings |
+| Sanitized bundle | ✅ schema v1 export/import, import는 read-only |
 
 ---
 
@@ -63,13 +65,13 @@ Planner, Architect, Developer, Reviewer, QA는 각각 서버 전용 API route를
 - **Reset** — 초기 상태로 복귀
 
 ### 사이드 패널
-- **Task Queue** — 태스크 상태(backlog/in-progress/review/done)·담당자 표시
+- **Task Queue** — 태스크 상태(backlog/in-progress/review/done)·담당자 표시, task 선택 후 해당 역할의 **Ask Architect/Developer/Reviewer/QA** 실행
 - **Agent Status** — 에이전트별 현재 상태·현재 태스크·완료 수
 - **Event Log** — 실시간 이벤트 스트림 (KST 시간 표시, 접기/펼치기)
 - Event Log는 성능 보호를 위해 최신 200개까지만 렌더링
 - **Workflow Graph** — Planner→Architect→Developer→Reviewer→QA React Flow 그래프 (활성 노드 하이라이트, QA→Dev 버그 엣지)
-- **Debug Panel** — Supabase 상태, 마지막 Planner provider, traceRecorded, model, latency/token 표시 (접기/펼치기, mock/trace 실패 경고 표시)
-- **Agent Trace Viewer** — Debug Panel 안에서 `agent_traces` 최근 100개를 session별로 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약 표시
+- **Debug Panel** — Supabase 상태, 마지막 role/provider, traceRecorded, model, latency/token/호출 시간 표시 (접기/펼치기, mock/trace 실패 경고, 작은 화면에서는 overlay)
+- **Trace Correlation Debugger** — Debug Panel 안에서 `agent_traces` 최근 100개를 session별로 조회하고 `llm_call`/`handoff`/`decision`/`tool_use` badge, KST 시간, token/latency, metadata 요약, anomaly/context 표시
 
 ### 타입드 이벤트 버스
 `src/lib/simulation/eventBus.ts`에 8종 이벤트 정의:
@@ -144,7 +146,7 @@ useRealtimeSync (외부 세션 수신 시)
 | Reviewer API route | ✅ `POST /api/agents/reviewer` |
 | QA API route | ✅ `POST /api/agents/qa` |
 | 요청 body | ✅ `{ taskTitle, taskDescription, sessionId }` (`session_id`도 호환) |
-| 응답 형식 | ✅ `ok`, `provider`, `role`, `summary`, `steps`, `risks`, `nextAgent`, `traceRecorded` |
+| 응답 형식 | ✅ 역할별 고정 JSON shape + 공통 telemetry (`traceRecorded`, `model`, `latencyMs`, `inputTokens`, `outputTokens`) |
 | live 호출 gate | ✅ `ENABLE_LIVE_LLM=true` + `ANTHROPIC_API_KEY` 필요 |
 | 기본 동작 | ✅ `ENABLE_LIVE_LLM=false` 이면 mock fallback |
 | 서버 전용 키 | ✅ `ANTHROPIC_API_KEY`는 `NEXT_PUBLIC_` 없이 서버에서만 사용 |
@@ -172,7 +174,19 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 `ANTHROPIC_API_KEY`는 서버 전용입니다. `NEXT_PUBLIC_ANTHROPIC_API_KEY` 같은 브라우저 노출 변수는 만들지 않습니다.
 `CLAUDE_MODEL`을 비워두면 서버 코드가 `claude-sonnet-4-20250514`를 사용합니다. 설정한 모델이 `model_not_found`로 실패하면 이 안정적인 기본 모델로 한 번 재시도합니다.
-`SUPABASE_SERVICE_ROLE_KEY`도 서버 전용입니다. Production의 `/api/agents/planner`에서 `llm_call` trace를 안정적으로 저장할 때 우선 사용하며, 브라우저에는 절대 노출하지 않습니다.
+`SUPABASE_SERVICE_ROLE_KEY`도 서버 전용입니다. 모든 역할의 서버 route에서 `llm_call` trace를 저장할 때 우선 사용하며, 브라우저에는 절대 노출하지 않습니다.
+
+### 역할별 응답 계약
+
+모든 route는 `POST { taskTitle, taskDescription, sessionId }`를 받고 `ok`, `provider`, `role`, `summary` 및 telemetry를 반환합니다. `session_id`도 호환되지만 UI는 탭별 UUID `getSessionId()`를 사용합니다.
+
+- Planner: `steps`, `risks`, `nextAgent`
+- Architect: `architectureNotes`, `dataFlow`, `risks`, `nextAgent` (`developer|reviewer|qa`)
+- Developer: `implementationPlan`, `filesToChange`, `testPlan`, `risks`, `nextAgent` (`reviewer|qa`)
+- Reviewer: `reviewFindings`, `suggestedChanges`, `risks`, `approvalStatus` (`approved|changes_requested|needs_more_info`), `nextAgent` (`developer|qa`)
+- QA: `testCases`, `regressionChecks`, `qualityRisks`, `finalStatus` (`passed|failed|needs_more_testing`), `nextAgent` (`developer|reviewer|planner`)
+
+Claude 응답은 공통 JSON extractor/parser와 필드별 normalization을 통과합니다. server-only SDK에는 작은 `max_tokens`, abort/timeout, 모델 fallback 및 안전한 오류 분류가 있으며 raw provider error/API key는 응답에 포함하지 않습니다. `debugReason`은 development에서만 표시됩니다.
 
 ### 실제 호출 켜기
 
@@ -309,7 +323,7 @@ cp .env.example .env.local
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Dashboard → Project Settings → API | 브라우저 클라이언트 |
 | `SUPABASE_SERVICE_ROLE_KEY` | Dashboard → Project Settings → API | 서버 전용 (`agent_traces.llm_call` insert 우선 키) |
 
-`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 Supabase anon JWT만 넣습니다. `sk-ant-...` 같은 Claude/Anthropic key나 service role key를 넣으면 브라우저 번들에 노출되고 Supabase client가 `Invalid API key`로 실패합니다. 실수로 노출했다면 해당 provider key를 즉시 rotate하세요.
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 Supabase Dashboard → **Project Settings → API → Project API keys**에서 발급되는 legacy `anon`/public JWT 또는 새 브라우저용 `sb_publishable_...` key만 넣습니다. `sk-ant-...` 같은 Claude/Anthropic key, `service_role` 또는 service secret key를 넣으면 브라우저 번들에 노출되고 Supabase client가 `Invalid API key`로 실패할 수 있습니다. 실수로 노출했다면 해당 key를 즉시 rotate하세요.
 
 ### 2. 스키마 적용
 
@@ -324,6 +338,8 @@ npx supabase gen types typescript --project-id <ref> > src/lib/supabase/types.ts
 ### 4. Vercel 배포
 
 Vercel Dashboard → Project → Settings → Environment Variables에서 동일한 변수를 설정합니다.
+
+환경변수 변경 후에는 반드시 **Production redeploy**가 필요합니다(`NEXT_PUBLIC_*`는 build 시점에 번들에 반영). 서버 전용 `SUPABASE_SERVICE_ROLE_KEY`/`ANTHROPIC_API_KEY`에는 `NEXT_PUBLIC_`를 붙이지 마세요. 최신 배포가 실패하면 Vercel 로그인 후 `npx vercel inspect <deployment-id> --logs`로 build/runtime 로그와 Production 환경변수, 연결된 Git branch를 확인하세요. 현재 작업 환경에는 Vercel 인증과 LIVE Supabase 자격증명이 없어 최신 deployment logs/LIVE 상태를 재검증하지 못했습니다.
 `SUPABASE_SERVICE_ROLE_KEY`는 Production/Preview/Development 중 필요한 환경에 서버 전용으로 추가하고, `NEXT_PUBLIC_` prefix를 붙이지 않습니다.
 배포 후 화면 상단에 **SUPABASE LIVE** (초록) 배지가 표시되면 연결 성공입니다.
 

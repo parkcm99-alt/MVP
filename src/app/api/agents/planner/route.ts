@@ -82,38 +82,22 @@ function withPlannerTelemetry(
 }
 
 function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
-  const fallback = safePlannerResponse({
-    provider: llm.provider,
-    summary: normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
-  });
+  const defaults = safePlannerResponse({ provider: llm.provider });
+  const parsed = parseLlmJson(llm.content);
+  if (!parsed) return { response: defaults, debugReason: 'json_parse_failed' };
 
-  try {
-    const parsed = parseLlmJson(llm.content);
-    if (!parsed) throw new Error('json_parse_failed');
-    const summary = normalizeText(parsed.summary, '');
-    const steps = stringArray(parsed.steps).slice(0, 4);
-    const risks = stringArray(parsed.risks).slice(0, 3);
-    const nextAgent = normalizeText(parsed.nextAgent, '');
-
-    if (!summary || steps.length === 0 || !nextAgent) {
-      return { response: fallback, debugReason: 'json_parse_failed' };
-    }
-
-    return {
-      response: safePlannerResponse({
-        provider: llm.provider,
-        summary,
-        steps,
-        risks,
-        nextAgent: nextAgent.toLowerCase(),
-      }),
-    };
-  } catch {
-    return {
-      response: fallback,
-      debugReason: 'json_parse_failed',
-    };
-  }
+  // A parseable object is normalized field-by-field; only JSON parse failure triggers fallback.
+  const nextAgent = normalizeText(parsed.nextAgent, defaults.nextAgent).toLowerCase();
+  return {
+    response: safePlannerResponse({
+      provider: llm.provider,
+      summary: normalizeText(parsed.summary, defaults.summary),
+      steps: stringArray(parsed.steps, defaults.steps).slice(0, 4),
+      risks: stringArray(parsed.risks, defaults.risks).slice(0, 3),
+      nextAgent: ['planner', 'architect', 'developer', 'reviewer', 'qa'].includes(nextAgent)
+        ? nextAgent : defaults.nextAgent,
+    }),
+  };
 }
 
 function buildPlannerSystemPrompt(basePrompt: string): string {
@@ -131,7 +115,15 @@ function buildPlannerSystemPrompt(basePrompt: string): string {
 }
 
 function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean, latencyMs: number | null = null) {
+  if (llm.provider !== 'claude') {
+    return Response.json(withDevDebug(
+      withPlannerTelemetry(safePlannerResponse({ provider: 'mock', summary: normalizeText(llm.content, safePlannerResponse().summary) }), llm, false, latencyMs),
+      llm.fallbackReason,
+      false,
+    ));
+  }
   const parsed = parsePlannerContent(llm);
+  if (parsed.debugReason) console.warn(`Claude planner response failed: ${parsed.debugReason}`);
   return Response.json(withDevDebug(
     withPlannerTelemetry(parsed.response, llm, traceRecorded, latencyMs),
     parsed.debugReason ?? llm.fallbackReason,
@@ -158,7 +150,7 @@ async function recordPlannerLlmTrace(
       model: llm.model ?? null,
       metadata: {
         provider: 'claude',
-        taskTitle,
+        task_title: taskTitle,
       },
     });
     return traceRecorded;

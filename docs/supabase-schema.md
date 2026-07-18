@@ -128,6 +128,8 @@ create table public.agent_traces (
 
 create index agent_traces_session_id on public.agent_traces (session_id);
 create index agent_traces_agent_id   on public.agent_traces (agent_id);
+create index agent_traces_created_at on public.agent_traces (created_at desc);
+create index agent_traces_session_timeline on public.agent_traces (session_id, created_at desc);
 ```
 
 ---
@@ -159,6 +161,8 @@ create policy "anon read"   on public.agent_traces for select using (true);
 create policy "anon insert" on public.agent_traces for insert with check (true);
 ```
 
+서버 route는 `SUPABASE_SERVICE_ROLE_KEY`를 우선 사용하며 service role은 RLS를 bypass하므로 절대 브라우저/`NEXT_PUBLIC_*`에 노출하면 안 됩니다. 서버에 service role이 없으면 MVP 호환을 위해 anon key로 fallback합니다. Trace Viewer의 조회와 브라우저 workflow의 handoff/decision 기록에는 anon/publishable 정책이 사용됩니다. trace에는 API key·bearer token·secret을 저장하지 않으며 UPDATE/DELETE 정책은 열지 않습니다. 위 `true` 정책은 데모/MVP용으로 매우 permissive합니다. Production에서는 Supabase Auth 및 사용자/세션 소유권 기반 SELECT/INSERT/UPDATE 정책으로 교체하세요.
+
 ---
 
 ## 연결 체크리스트
@@ -175,7 +179,5 @@ create policy "anon insert" on public.agent_traces for insert with check (true);
 
 | 채널명 | 목적 | 이벤트 |
 |--------|------|--------|
-| `sim-events-changes` | events 테이블 INSERT 구독 (중복 방지: session_id 필터) | postgres_changes INSERT |
+| `sim-multiplayer` | events/agents/tasks 변경 동기화 | postgres_changes |
 | `_conn_check` | 연결 상태 확인 전용 (ConnectionStatus 컴포넌트) | subscribe state |
-| `agent-state` (예정) | 에이전트 상태 실시간 동기화 | postgres_changes on agents |
-| `task-updates` (예정) | 태스크 변경 동기화 | postgres_changes on tasks |

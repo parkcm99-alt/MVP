@@ -49,6 +49,7 @@ export function useRealtimeSync() {
             agentColor: r.agent_color,
             type:       r.type        as EventType,
             message:    r.message,
+            sessionId:  r.session_id,
           });
         },
       )

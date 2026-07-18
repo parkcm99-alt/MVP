@@ -63,6 +63,10 @@ export interface SimTask {
   priority: TaskPriority;
   createdAt: number;
   updatedAt: number;
+  /** Client-only correlation context; not a new database column. */
+  sessionId?: string;
+  /** Debug findings are never persisted or broadcast. */
+  localOnly?: boolean;
 }
 
 export interface SimEvent {
@@ -73,6 +77,8 @@ export interface SimEvent {
   agentColor: string;
   type: EventType;
   message: string;
+  /** Preserved from Realtime rows for read-only Operations Lens correlation. */
+  sessionId?: string;
 }
 
 // ──────────────────────────────────────────────

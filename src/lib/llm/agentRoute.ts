@@ -88,6 +88,24 @@ export function createAgentPost(config: AgentRouteConfig) {
       });
     }
 
+    const parsed = parseLlmJson(llm.content);
+    const normalized: Record<string, unknown> = {};
+    if (parsed) {
+      for (const [key, kind] of Object.entries(config.fields)) {
+        normalized[key] = kind === 'array'
+          ? stringArray(parsed[key], config.fallback[key] as string[])
+          : stringValue(parsed[key], String(config.fallback[key] ?? ''));
+      }
+      const nextAgent = String(normalized.nextAgent ?? '');
+      if (config.nextAgents.length && !config.nextAgents.includes(nextAgent)) {
+        normalized.nextAgent = config.fallback.nextAgent;
+      }
+      for (const [field, allowed] of Object.entries(config.enumValues ?? {})) {
+        if (!allowed.includes(String(normalized[field] ?? ''))) normalized[field] = config.fallback[field];
+      }
+    }
+
+    // Await before returning. Safe result enums make failure-state correlation possible.
     const traceRecorded = await insertAgentTrace({
       sessionId,
       agentId: config.role,
@@ -96,10 +114,14 @@ export function createAgentPost(config: AgentRouteConfig) {
       outputTokens: llm.outputTokens,
       latencyMs,
       model: llm.model,
-      metadata: { provider: 'claude', task_title: taskTitle },
+      metadata: {
+        provider: 'claude',
+        task_title: taskTitle,
+        ...(parsed && typeof normalized.finalStatus === 'string' ? { finalStatus: normalized.finalStatus } : {}),
+        ...(parsed && typeof normalized.approvalStatus === 'string' ? { approvalStatus: normalized.approvalStatus } : {}),
+      },
     });
 
-    const parsed = parseLlmJson(llm.content);
     if (!parsed) {
       console.warn(`Claude ${config.role} response failed: json_parse_failed`);
       return Response.json({
@@ -107,21 +129,6 @@ export function createAgentPost(config: AgentRouteConfig) {
         ...debugFields(traceRecorded, llm.model, latencyMs, llm.inputTokens, llm.outputTokens, 'json_parse_failed'),
       });
     }
-
-    const normalized: Record<string, unknown> = {};
-    for (const [key, kind] of Object.entries(config.fields)) {
-      normalized[key] = kind === 'array'
-        ? stringArray(parsed[key], config.fallback[key] as string[])
-        : stringValue(parsed[key], String(config.fallback[key] ?? ''));
-    }
-    const nextAgent = String(normalized.nextAgent ?? '');
-    if (config.nextAgents.length && !config.nextAgents.includes(nextAgent)) {
-      normalized.nextAgent = config.fallback.nextAgent;
-    }
-    for (const [field, allowed] of Object.entries(config.enumValues ?? {})) {
-      if (!allowed.includes(String(normalized[field] ?? ''))) normalized[field] = config.fallback[field];
-    }
-
 
     return Response.json({
       ok: true, provider: 'claude', role: config.role, ...normalized,

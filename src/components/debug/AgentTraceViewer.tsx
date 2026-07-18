@@ -1,86 +1,64 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  eventRelatesToTask,
+  lensIsActive,
+  matchesTask,
+  matchesTrace,
+  sessionMatches,
+  traceRelatesToEvent,
+  traceRelatesToTask,
+  traceTaskTitle,
+} from '@/lib/debug/operationsLens';
+import {
+  findTraceAnomalies,
+  makeSanitizedBundle,
+  MAX_IMPORT_BYTES,
+  parseSanitizedBundle,
+  safeMetadataSummary,
+  TRACE_LIMIT,
+} from '@/lib/debug/traceCorrelation';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import { getSessionId } from '@/lib/supabase/session';
 import type { AgentTraceRow } from '@/lib/supabase/types';
 import { formatKstTime } from '@/lib/time';
-import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import { includesKeyword, useLensStore } from '@/store/lensStore';
+import { useLensStore } from '@/store/lensStore';
+import { useSimStore } from '@/store/simulationStore';
 import LensHighlight from './LensHighlight';
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
-type Anomaly = { signature: string; summary: string; hint: string; role: 'reviewer' | 'qa' };
-type Bundle = { schemaVersion: 1; exportedAt: string; sessionId: string; traces: AgentTraceRow[] };
-const TRACE_LIMIT = 100;
-const MAX_IMPORT_BYTES = 2_000_000;
-const SECRET_KEY = /api.?key|authorization|bearer|credential|password|secret|service.?role|token/i;
-const SECRET_VALUE = /(?:sk-(?:ant-|proj-)?[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{12,}|github_pat_[a-z0-9_]{12,}|sb_(?:secret|publishable)_[a-z0-9_-]{12,}|bearer\s+\S+|eyJ[a-zA-Z0-9_-]{10,}\.)/i;
-const TRACE_TYPES = new Set(['llm_call', 'handoff', 'decision', 'tool_use']);
 
+function badge(type: string): string {
+  return type === 'llm_call' ? 'trace-badge--llm'
+    : type === 'handoff' ? 'trace-badge--handoff'
+    : type === 'decision' ? 'trace-badge--decision'
+    : type === 'tool_use' ? 'trace-badge--tool' : 'trace-badge--unknown';
+}
 
-function badge(type: string) {
-  return type === 'llm_call' ? 'trace-badge--llm' : type === 'handoff' ? 'trace-badge--handoff' : type === 'decision' ? 'trace-badge--decision' : type === 'tool_use' ? 'trace-badge--tool' : 'trace-badge--unknown';
+function newestFirst(rows: AgentTraceRow[]): AgentTraceRow[] {
+  return [...new Map(rows.map(row => [row.id, row])).values()]
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
+    .slice(0, TRACE_LIMIT);
 }
-function taskTitle(t: AgentTraceRow): string {
-  const m = t.metadata ?? {};
-  const value = m.task_title ?? m.taskTitle;
-  return typeof value === 'string' ? value : '';
-}
-function sanitize(value: unknown, key = ''): unknown {
-  if (SECRET_KEY.test(key)) return '[REDACTED]';
-  if (typeof value === 'string') return SECRET_VALUE.test(value) ? '[REDACTED]' : value.slice(0, 2000);
-  if (Array.isArray(value)) return value.map(v => sanitize(v));
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sanitize(v, k)]));
-  return value;
-}
-function metadataText(metadata: AgentTraceRow['metadata']) {
-  if (!metadata) return 'metadata —';
-  return Object.entries(sanitize(metadata) as Record<string, unknown>).slice(0, 4).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v).slice(0, 60) : String(v)}`).join(' · ');
-}
-function validImportedTrace(value: unknown, sessionId: string): value is AgentTraceRow {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const trace = value as Partial<AgentTraceRow>;
-  return typeof trace.id === 'string'
-    && trace.id.length <= 200
-    && trace.session_id === sessionId
-    && typeof trace.agent_id === 'string'
-    && trace.agent_id.length <= 80
-    && typeof trace.trace_type === 'string'
-    && TRACE_TYPES.has(trace.trace_type)
-    && typeof trace.created_at === 'string'
-    && Number.isFinite(Date.parse(trace.created_at))
-    && (trace.metadata === null || (typeof trace.metadata === 'object' && !Array.isArray(trace.metadata)));
-}
-function anomaliesFor(traces: AgentTraceRow[]): Anomaly[] {
-  const sorted = [...traces].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
-  const out: Anomaly[] = [];
-  for (const [i, t] of sorted.entries()) {
-    const m = t.metadata ?? {};
-    if (m.traceRecorded === false || m.traceRecorded === 'false') out.push({ signature: `trace-false:${t.id}`, summary: `${t.agent_id} trace가 기록되지 않았습니다.`, hint: 'Supabase 설정과 service role 권한을 확인하세요.', role: 'reviewer' });
-    if ((t.latency_ms ?? 0) >= 10000) out.push({ signature: `latency:${t.id}`, summary: `${t.agent_id} 호출 지연이 10초 이상입니다.`, hint: 'timeout, 모델 가용성, 네트워크 상태를 확인하세요.', role: 'qa' });
-    const status = String(m.finalStatus ?? m.final_status ?? m.approvalStatus ?? m.approval_status ?? '').toLowerCase();
-    if (['failed', 'changes_requested', 'needs_more_info', 'needs_more_testing'].includes(status)) out.push({ signature: `status:${t.id}:${status}`, summary: `${t.agent_id} 결과가 ${status} 상태입니다.`, hint: '권장 변경 또는 실패 테스트를 후속 task로 추적하세요.', role: 'reviewer' });
-    const target = String(m.target_agent ?? '');
-    if (t.trace_type === 'handoff' && t.agent_id === 'planner' && !sorted.slice(i + 1).some(n => n.trace_type === 'decision'
-      && (!target || n.agent_id === target)
-      && (!taskTitle(t) || taskTitle(n) === taskTitle(t)))) out.push({ signature: `handoff:${t.id}`, summary: `Planner handoff 뒤 decision이 없습니다.`, hint: '대상 agent의 task 시작과 decision trace 기록을 확인하세요.', role: 'qa' });
 
-    const action = String(m.action ?? m.event ?? '').toLowerCase();
-    if (m.askAgent === true || action.includes('ask_agent')) {
-      const at = Date.parse(t.created_at);
-      const hasRelatedCall = sorted.some(n => n.trace_type === 'llm_call' && n.agent_id === t.agent_id &&
-        Math.abs(Date.parse(n.created_at) - at) <= 30_000 &&
-        (!taskTitle(t) || !taskTitle(n) || taskTitle(n) === taskTitle(t)));
-      if (!hasRelatedCall) out.push({ signature: `ask:${t.id}`, summary: `${t.agent_id} Ask Agent 뒤 llm_call이 없습니다.`, hint: 'API route 응답과 ENABLE_LIVE_LLM fallback 상태를 확인하세요.', role: 'reviewer' });
-    }
-  }
-  return out;
-}
-function localTraces(): AgentTraceRow[] {
+function localStateTraces(): AgentTraceRow[] {
   const now = new Date().toISOString();
-  return Object.values(useSimStore.getState().agents).filter(a => a.currentTask).map((a, i) => ({ id: `local-${a.id}-${i}`, session_id: getSessionId(), agent_id: a.id, trace_type: 'decision', input_tokens: null, output_tokens: null, latency_ms: null, model: 'local', metadata: { task_title: a.currentTask, status: a.status, source: 'local' }, created_at: now }));
+  return Object.values(useSimStore.getState().agents)
+    .filter(agent => agent.currentTask)
+    .map(agent => ({
+      id: `local-state-${agent.id}`,
+      session_id: getSessionId(),
+      agent_id: agent.id,
+      trace_type: 'decision',
+      input_tokens: null,
+      output_tokens: null,
+      latency_ms: null,
+      model: 'local',
+      metadata: { task_title: agent.currentTask, status: agent.status, source: 'local_state' },
+      created_at: now,
+    }));
 }
 
 export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: number | null }) {
@@ -89,149 +67,263 @@ export default function AgentTraceViewer({ refreshKey = null }: { refreshKey?: n
   const [traces, setTraces] = useState<AgentTraceRow[]>([]);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const findingKeysRef = useRef(new Set<string>());
-  const tasks = useSimStore(s => s.tasks);
-  const events = useSimStore(s => s.events);
-  const agents = useSimStore(s => s.agents);
-  const addLocalTask = useSimStore(s => s.addLocalTask);
-  const addEvent = useSimStore(s => s.addEvent);
-  const setHighlight = useDebugStore(s => s.setHighlightedTaskTitle);
-  const setObservedTraces = useDebugStore(s => s.setObservedTraces);
-  const recentAgentCalls = useDebugStore(s => s.recentAgentCalls);
-  const lens = useLensStore(s => s.filters);
-  const clearLens = useLensStore(s => s.clearAll);
+  const tasks = useSimStore(state => state.tasks);
+  const events = useSimStore(state => state.events);
+  const agents = useSimStore(state => state.agents);
+  const addLocalTask = useSimStore(state => state.addLocalTask);
+  const addEvent = useSimStore(state => state.addEvent);
+  const localTraceRows = useDebugStore(state => state.localTraces);
+  const setHighlights = useDebugStore(state => state.setHighlightedTaskTitles);
+  const setObservedTraces = useDebugStore(state => state.setObservedTraces);
+  const lens = useLensStore(state => state.filters);
+  const clearLens = useLensStore(state => state.clearAll);
+  const currentSession = getSessionId();
 
   const load = useCallback(async () => {
-    setStatus('loading'); setError(null); setReadOnly(false);
+    setStatus('loading');
+    setError(null);
+    setNotice(null);
+    setReadOnly(false);
     const local = useDebugStore.getState().localTraces;
     const supabase = getSupabaseClient();
     if (!supabase) {
-      const rows = [...local, ...localTraces()].slice(0, TRACE_LIMIT);
-      setTraces(rows); setSelected(rows[0]?.session_id ?? getSessionId()); setStatus('ready'); return;
+      const rows = newestFirst([...local, ...localStateTraces()]);
+      setTraces(rows);
+      setSelected(previous => previous && rows.some(row => row.session_id === previous)
+        ? previous : rows[0]?.session_id ?? getSessionId());
+      setStatus('ready');
+      return;
     }
-    const { data, error: queryError } = await supabase.from('agent_traces').select('id,session_id,agent_id,trace_type,input_tokens,output_tokens,latency_ms,model,metadata,created_at').order('created_at', { ascending: false }).limit(TRACE_LIMIT);
+
+    const { data, error: queryError } = await supabase.from('agent_traces')
+      .select('id,session_id,agent_id,trace_type,input_tokens,output_tokens,latency_ms,model,metadata,created_at')
+      .order('created_at', { ascending: false })
+      .limit(TRACE_LIMIT);
     if (queryError) {
       console.warn('[Supabase] agent_traces query failed:', queryError.message);
-      const rows = [...local, ...localTraces()].slice(0, TRACE_LIMIT);
-      setTraces(rows); setSelected(rows[0]?.session_id ?? getSessionId());
-      setError('Trace query failed; local analysis mode.'); setStatus('error'); return;
+      const rows = newestFirst([...local, ...localStateTraces()]);
+      setTraces(rows);
+      setSelected(previous => previous && rows.some(row => row.session_id === previous)
+        ? previous : rows[0]?.session_id ?? getSessionId());
+      setError('Trace 조회 실패 · local analysis로 계속합니다.');
+      setStatus('error');
+      return;
     }
-    const rows = [...local, ...(data ?? []) as AgentTraceRow[]]
-      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))
-      .slice(0, TRACE_LIMIT);
-    setTraces(rows); setSelected(s => s && rows.some(t => t.session_id === s) ? s : rows[0]?.session_id ?? ''); setStatus('ready');
-
+    const rows = newestFirst([...local, ...((data ?? []) as AgentTraceRow[])]);
+    setTraces(rows);
+    setSelected(previous => previous && rows.some(row => row.session_id === previous)
+      ? previous : rows[0]?.session_id ?? '');
+    setStatus('ready');
   }, []);
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load, refreshKey]);
-  useEffect(() => { setObservedTraces(traces); }, [traces, setObservedTraces]);
 
-  const sessions = useMemo(() => [...new Set(traces.map(t => t.session_id))], [traces]);
-  const sessionTraces = useMemo(() => traces.filter(t => t.session_id === selected), [traces, selected]);
-  const lensScopeTraces = useMemo(() => lens.sessionId
-    ? traces.filter(t => t.session_id.toLowerCase().includes(lens.sessionId.trim().toLowerCase()))
-    : sessionTraces, [traces, sessionTraces, lens.sessionId]);
-  const active = useMemo(() => lensScopeTraces.filter(t =>
-    (!lens.role || t.agent_id === lens.role) &&
-    (!lens.traceType || t.trace_type === lens.traceType) &&
-    (!(lens.status || lens.priority) || tasks.some(task =>
-      (!lens.status || task.status === lens.status) &&
-      (!lens.priority || task.priority === lens.priority) &&
-      (!taskTitle(t) || task.title.toLowerCase().includes(taskTitle(t).toLowerCase()) || taskTitle(t).toLowerCase().includes(task.title.toLowerCase()))
-    )) &&
-    includesKeyword(`${taskTitle(t)} ${JSON.stringify(t.metadata ?? {})}`, lens.keyword)
-  ), [lensScopeTraces, lens, tasks]);
-  const anomalies = useMemo(() => {
-    const traceAnomalies = anomaliesFor(sessionTraces);
-    if (readOnly) return traceAnomalies;
-    const callAnomalies = recentAgentCalls
-      .filter(call => call.sessionId === selected && !call.traceRecorded)
-      .map(call => ({
-        signature: `ask-call:${call.id}`,
-        summary: `${call.role} Ask Agent 호출 뒤 llm_call이 확인되지 않았습니다.`,
-        hint: 'API 응답의 traceRecorded, live-LLM 설정, Supabase trace 권한을 확인하세요.',
-        role: 'reviewer' as const,
-      }));
-    return [...traceAnomalies, ...callAnomalies];
-  }, [sessionTraces, recentAgentCalls, selected, readOnly]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load, refreshKey]);
+  // Workflow handoff/decision fallback traces can arrive after the API response refresh.
+  useEffect(() => {
+    if (!readOnly && localTraceRows.length) {
+      const timer = window.setTimeout(() => setTraces(previous => newestFirst([...localTraceRows, ...previous])), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [localTraceRows, readOnly]);
+  useEffect(() => {
+    if (!readOnly) setObservedTraces(traces);
+  }, [traces, readOnly, setObservedTraces]);
+
+  const sessions = useMemo(() => [...new Set(traces.map(trace => trace.session_id))], [traces]);
+  const matchingSessions = lens.sessionId.trim()
+    ? sessions.filter(session => sessionMatches(session, lens.sessionId, currentSession))
+    : sessions;
+  const activeSession = matchingSessions.includes(selected) ? selected : matchingSessions[0] ?? selected;
+  const sessionTraces = useMemo(() => traces.filter(trace => trace.session_id === activeSession), [traces, activeSession]);
+  const active = useMemo(() => sessionTraces
+    .filter(trace => matchesTrace(trace, lens, readOnly ? [] : tasks, currentSession))
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+  [sessionTraces, lens, tasks, currentSession, readOnly]);
+  const anomalies = useMemo(() => findTraceAnomalies(sessionTraces), [sessionTraces]);
   const groups = useMemo(() => {
-    const grouped = new Map<string, AgentTraceRow[]>();
+    const grouped = new Map<string, number>();
     for (const trace of active) {
-      const key = `${trace.session_id} / ${trace.agent_id} / ${trace.trace_type} / ${taskTitle(trace) || '—'}`;
-
-      grouped.set(key, [...(grouped.get(key) ?? []), trace]);
+      const key = `${trace.agent_id} / ${trace.trace_type} / ${traceTaskTitle(trace) || '—'}`;
+      grouped.set(key, (grouped.get(key) ?? 0) + 1);
     }
     return [...grouped.entries()];
   }, [active]);
-  const titles = useMemo(() => [...new Set(active.map(taskTitle).filter(Boolean))], [active]);
-  const relatedTasks = tasks.filter(t => titles.some(x => t.title.toLowerCase().includes(x.toLowerCase()) || x.toLowerCase().includes(t.title.toLowerCase())));
-  const relatedEvents = events.filter(e => titles.some(x => e.message.toLowerCase().includes(x.toLowerCase())) || active.some(t => e.agentId === t.agent_id)).slice(0, 8);
-  const scopedTasks = tasks.filter(t =>
-    (!lens.role || t.assignedTo === lens.role) &&
-    (!lens.status || t.status === lens.status) &&
-    (!lens.priority || t.priority === lens.priority) &&
-    includesKeyword(`${t.title} ${t.description}`, lens.keyword)
-  );
-  const lensWarnings = [
-    ...(scopedTasks.some(t => !events.some(e =>
-      e.agentId === t.assignedTo || e.message.toLowerCase().includes(t.title.toLowerCase())
-    )) ? ['Matching task has no related event.'] : []),
-    ...(scopedTasks.some(t => !lensScopeTraces.some(trace => {
-      const title = taskTitle(trace).toLowerCase();
-      return trace.agent_id === t.assignedTo || (title && (t.title.toLowerCase().includes(title) || title.includes(t.title.toLowerCase())));
-    })) ? ['Matching task has no related trace.'] : []),
-    ...(lens.sessionId && !traces.some(t => t.session_id.toLowerCase().includes(lens.sessionId.trim().toLowerCase())) ? ['SessionId mismatch.'] : []),
-    ...(lens.role && lensScopeTraces.length > 0 && !lensScopeTraces.some(t => t.agent_id === lens.role) ? ['Agent role mismatch.'] : []),
-  ];
-  useEffect(() => { setHighlight(titles.find(x => tasks.some(t => t.title.toLowerCase().includes(x.toLowerCase()))) ?? null); return () => setHighlight(null); }, [titles, tasks, setHighlight]);
+
+  // Context uses the complete chosen session, not the current Lens subset.
+  const relatedTasks = useMemo(() => readOnly ? [] : tasks.filter(task => sessionTraces
+    .some(trace => traceRelatesToTask(trace, task, currentSession))),
+  [readOnly, tasks, sessionTraces, currentSession]);
+  const relatedEvents = useMemo(() => readOnly ? [] : events.filter(event => sessionTraces
+    .some(trace => traceRelatesToEvent(trace, event, currentSession))
+    || relatedTasks.some(task => eventRelatesToTask(event, task, currentSession))).slice(0, 8),
+  [readOnly, events, sessionTraces, relatedTasks, currentSession]);
+  const relatedAgents = useMemo(() => readOnly ? [] : Object.values(agents)
+    .filter(agent => sessionTraces.some(trace => trace.agent_id === agent.id)),
+  [readOnly, agents, sessionTraces]);
+
+  const lensWarnings = useMemo(() => {
+    if (readOnly || !lensIsActive(lens)) return [];
+    const warnings: string[] = [];
+    const queriedTraces = traces.filter(trace => sessionMatches(trace.session_id, lens.sessionId, currentSession));
+    const candidateTasks = tasks.filter(task => matchesTask(task, { ...lens, traceType: '' }, traces, currentSession));
+    const noEvent = candidateTasks.filter(task => !events.some(event => eventRelatesToTask(event, task, currentSession))).length;
+    const noTrace = candidateTasks.filter(task => !queriedTraces.some(trace => traceRelatesToTask(trace, task, currentSession))).length;
+    if (noEvent) warnings.push(`${noEvent} matching task에 관련 event가 없습니다. · 작업 시작 로그를 확인하세요.`);
+    if (noTrace) warnings.push(`${noTrace} matching task에 관련 trace가 없습니다. · Refresh 또는 trace 권한을 확인하세요.`);
+    if (lens.sessionId.trim()
+      && !traces.some(trace => sessionMatches(trace.session_id, lens.sessionId, currentSession))
+      && !tasks.some(task => sessionMatches(task.sessionId, lens.sessionId, currentSession))
+      && !events.some(event => sessionMatches(event.sessionId, lens.sessionId, currentSession))) {
+      warnings.push('SessionId와 일치하는 task/event/trace가 없습니다. · session 필터를 확인하세요.');
+    }
+    if (lens.role && queriedTraces.length > 0 && !queriedTraces.some(trace => trace.agent_id === lens.role)) {
+      warnings.push('선택 session의 trace에 해당 agent role이 없습니다. · role/session 조합을 확인하세요.');
+    }
+    return warnings;
+  }, [readOnly, lens, traces, tasks, events, currentSession]);
+
+  useEffect(() => {
+    setHighlights(readOnly ? [] : active.map(traceTaskTitle).filter(Boolean));
+    return () => setHighlights([]);
+  }, [readOnly, active, setHighlights]);
 
   function createFinding() {
-    if (readOnly) return;
-    const a = anomalies.find(item => {
-      const candidate = `trace-finding:${selected}:${item.signature}`;
-      if (findingKeysRef.current.has(candidate)) return false;
-      try { return !localStorage.getItem(candidate); } catch { return true; }
+    if (readOnly || !activeSession) return;
+    const anomaly = anomalies.find(item => {
+      const key = `trace-finding:v1:${activeSession}:${item.signature}`;
+      if (findingKeysRef.current.has(key)) return false;
+      try { return !localStorage.getItem(key); } catch { return true; }
     });
-    if (!a) { setError('동일한 session/anomaly finding이 이미 있습니다.'); return; }
-    const key = `trace-finding:${selected}:${a.signature}`;
+    if (!anomaly) {
+      setNotice('동일한 session/anomaly finding이 이미 있습니다.');
+      return;
+    }
+    const key = `trace-finding:v1:${activeSession}:${anomaly.signature}`;
     findingKeysRef.current.add(key);
+    addLocalTask({
+      title: `Trace finding: ${anomaly.summary}`.slice(0, 44),
+      description: `${anomaly.summary}\nHint: ${anomaly.hint}\n[local-only] session=${activeSession}`,
+      assignedTo: anomaly.role,
+      status: 'backlog',
+      priority: 'high',
+      sessionId: activeSession,
+    });
+    addEvent({
+      agentId: anomaly.role,
+      agentName: anomaly.role === 'qa' ? 'QA' : 'Reviewer',
+      agentColor: '#F59E0B',
+      type: 'review',
+      message: `[Trace Debug] ${anomaly.summary}`,
+      sessionId: activeSession,
+    });
+    try { localStorage.setItem(key, '1'); } catch { /* storage unavailable: in-memory guard remains */ }
+    setNotice('Local-only debug finding task 1개를 생성했습니다.');
+  }
 
-    addLocalTask({ title: `Trace finding: ${a.summary}`.slice(0, 40), description: `${a.summary} ${a.hint} [local-only]`, assignedTo: a.role, status: 'backlog', priority: 'high' });
-    addEvent({ agentId: a.role, agentName: a.role === 'qa' ? 'QA' : 'Reviewer', agentColor: '#F59E0B', type: 'review', message: `[Trace Debug] ${a.summary}` });
-    try { localStorage.setItem(key, '1'); } catch { /* no-op */ }
-  }
   function exportBundle() {
-    const bundle = sanitize({ schemaVersion: 1, exportedAt: new Date().toISOString(), sessionId: selected, traces: sessionTraces }) as Bundle;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = `trace-${selected || 'session'}.sanitized.json`; a.click(); URL.revokeObjectURL(url);
+    if (!activeSession || !sessionTraces.length) return;
+    const bundle = makeSanitizedBundle(activeSession, sessionTraces);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `trace-${activeSession}.sanitized.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNotice('Sanitized JSON Bundle을 내보냈습니다. 공유 전 내용을 확인하세요.');
   }
+
   async function importBundle(file?: File) {
     if (!file) return;
     try {
-      if (file.size > MAX_IMPORT_BYTES) throw new Error('too_large');
-      const parsed = JSON.parse(await file.text()) as Partial<Bundle>;
-      if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.traces) || parsed.traces.length > TRACE_LIMIT || typeof parsed.sessionId !== 'string' || !parsed.sessionId) throw new Error('unsupported');
-      const safe = sanitize(parsed.traces) as AgentTraceRow[];
-      if (!safe.every(t => validImportedTrace(t, parsed.sessionId!))) throw new Error('invalid');
-
-      setTraces(safe); setSelected(parsed.sessionId); setReadOnly(true); setStatus('ready'); setError(null);
-    } catch { setError('손상된 JSON 또는 지원하지 않는 schema version입니다.'); }
-    finally { if (inputRef.current) inputRef.current.value = ''; }
+      if (file.size > MAX_IMPORT_BYTES) throw new Error('invalid_bundle');
+      const bundle = parseSanitizedBundle(await file.text());
+      if (!bundle) throw new Error('invalid_bundle');
+      setTraces(newestFirst(bundle.traces));
+      setSelected(bundle.sessionId);
+      setReadOnly(true);
+      setStatus('ready');
+      setError(null);
+      setNotice('Read-only analysis mode · live task/event context와 쓰기는 비활성화됩니다.');
+      setHighlights([]);
+    } catch {
+      setError('손상된 JSON 또는 지원하지 않는 schema version입니다.');
+    } finally {
+      if (inputRef.current) inputRef.current.value = '';
+    }
   }
 
-  return <section className={`trace-viewer${collapsed ? ' trace-viewer--collapsed' : ''}`}>
-    <div className="trace-viewer-header"><button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(v => !v)}><span>TRACE CORRELATION DEBUGGER</span><strong>{active.length}/{lensScopeTraces.length}</strong></button><button className="trace-refresh-btn" onClick={clearLens}>CLEAR ALL</button><button className="trace-refresh-btn" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button></div>
-    {!collapsed && <div className="trace-viewer-body">
-      <div className="trace-viewer-meta"><span>{readOnly ? 'READ-ONLY IMPORT' : status}</span><span>{active.length}/{lensScopeTraces.length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span></div>
-      {error && <div className="trace-message trace-message--error">{error}</div>}
-      <select value={selected} onChange={e => setSelected(e.target.value)} style={{ width: '100%', background: '#07111f', color: '#cbd5e1', fontSize: 10 }}><option value="">Select session</option>{sessions.map(s => <option key={s} value={s}>{s}</option>)}</select>
-      <div style={{ display: 'flex', gap: 4, margin: '5px 0' }}><button className="trace-refresh-btn" onClick={createFinding} disabled={readOnly || !anomalies.length}>CREATE DEBUG FINDING</button><button className="trace-refresh-btn" onClick={exportBundle} disabled={!sessionTraces.length}>EXPORT</button><button className="trace-refresh-btn" onClick={() => inputRef.current?.click()}>IMPORT</button><input ref={inputRef} hidden type="file" accept="application/json" onChange={e => void importBundle(e.target.files?.[0])} /></div>
-      {lensWarnings.map(w => <div key={w} className="trace-message trace-message--error">Lens warning: {w}</div>)}
-      {anomalies.map(a => <div key={a.signature} className="trace-message trace-message--error"><strong>{a.summary}</strong><br />Hint: {a.hint}</div>)}
-      {active.length === 0 && <div className="trace-empty">No traces match · use Clear all</div>}
-      <div className="trace-list">{groups.map(([group, rows]) => <section key={group}><div style={{ fontSize: 9, color: '#94a3b8', margin: '5px 0' }}><LensHighlight text={group} keyword={lens.keyword} /> ({rows.length})</div>{rows.map(t => <article className="trace-card" key={t.id}><div className="trace-card-top"><span className={`trace-badge ${badge(t.trace_type)}`}>{t.trace_type}</span><strong>{t.agent_id}</strong><time>{formatKstTime(t.created_at)} KST</time></div><div className="trace-card-metrics"><span>{t.model ?? 'model —'}</span><span>{t.latency_ms ?? '—'}ms</span><span>in {t.input_tokens ?? '—'}</span><span>out {t.output_tokens ?? '—'}</span></div><p><LensHighlight text={metadataText(t.metadata)} keyword={lens.keyword} /></p></article>)}</section>)}</div>
-
-      <div style={{ fontSize: 9, color: '#cbd5e1', marginTop: 6 }}><strong>RELATED TASKS</strong>: {relatedTasks.map(t => t.title).join(' · ') || '—'}<br /><strong>EVENT LOG</strong>: {relatedEvents.map(e => e.message).join(' · ') || '—'}<br /><strong>AGENTS</strong>: {Object.values(agents).filter(a => active.some(t => t.agent_id === a.id)).map(a => `${a.id}:${a.status}`).join(' · ') || '—'}</div>
-    </div>}
-  </section>;
+  return (
+    <section className={`trace-viewer${collapsed ? ' trace-viewer--collapsed' : ''}`}>
+      <div className="trace-viewer-header">
+        <button className="trace-viewer-toggle" type="button" onClick={() => setCollapsed(value => !value)} aria-expanded={!collapsed}>
+          <span>TRACE CORRELATION DEBUGGER</span><strong>{active.length}/{sessionTraces.length}</strong>
+        </button>
+        <button className="trace-refresh-btn" type="button" onClick={clearLens}>CLEAR ALL</button>
+        <button className="trace-refresh-btn" type="button" onClick={() => void load()} disabled={status === 'loading'}>REFRESH</button>
+      </div>
+      {!collapsed && (
+        <div className="trace-viewer-body">
+          <div className="trace-viewer-meta">
+            <span>{readOnly ? 'READ-ONLY IMPORT' : status === 'error' ? 'LOCAL FALLBACK' : status.toUpperCase()}</span>
+            <span>{active.length}/{sessionTraces.length} filtered · {sessions.length} sessions · {anomalies.length} anomalies</span>
+          </div>
+          {error && <div className="trace-message trace-message--error">{error}</div>}
+          {notice && <div className="trace-message trace-message--unavailable">{notice}</div>}
+          <select className="trace-session-select" aria-label="Trace session" value={activeSession} onChange={event => setSelected(event.target.value)}>
+            <option value="">Select session</option>
+            {sessions.map(session => <option key={session} value={session}>{session}</option>)}
+          </select>
+          <div className="trace-actions">
+            <button className="trace-refresh-btn" type="button" onClick={createFinding} disabled={readOnly || !anomalies.length}>CREATE DEBUG FINDING</button>
+            <button className="trace-refresh-btn" type="button" onClick={exportBundle} disabled={!sessionTraces.length}>EXPORT</button>
+            <button className="trace-refresh-btn" type="button" onClick={() => inputRef.current?.click()}>IMPORT</button>
+            <input ref={inputRef} hidden type="file" accept="application/json,.json" onChange={event => void importBundle(event.target.files?.[0])} />
+          </div>
+          {lensWarnings.map(warning => <div key={warning} className="trace-message trace-message--unavailable"><strong>Lens warning:</strong> {warning}</div>)}
+          {anomalies.map(anomaly => (
+            <div key={anomaly.signature} className="trace-message trace-message--error">
+              <strong>{anomaly.summary}</strong><br />Hint: {anomaly.hint}
+            </div>
+          ))}
+          {groups.length > 0 && (
+            <div className="trace-groups">
+              <strong>GROUPS · agent / type / task</strong>
+              {groups.map(([group, count]) => <span key={group}><LensHighlight text={group} keyword={lens.keyword} /> ({count})</span>)}
+            </div>
+          )}
+          {active.length === 0 && <div className="trace-empty">No traces match · use Clear all</div>}
+          <div className="trace-list">
+            {active.map(trace => (
+              <article className="trace-card" key={trace.id}>
+                <div className="trace-card-top">
+                  <span className={`trace-badge ${badge(trace.trace_type)}`}>{trace.trace_type}</span>
+                  <strong><LensHighlight text={trace.agent_id} keyword={lens.keyword} /></strong>
+                  <time>{formatKstTime(trace.created_at)} KST</time>
+                </div>
+                <div className="trace-card-metrics">
+                  <span><LensHighlight text={trace.model ?? 'model —'} keyword={lens.keyword} /></span>
+                  <span>{trace.latency_ms ?? '—'}ms</span><span>in {trace.input_tokens ?? '—'}</span><span>out {trace.output_tokens ?? '—'}</span>
+                </div>
+                <p><LensHighlight text={safeMetadataSummary(trace.metadata)} keyword={lens.keyword} /></p>
+              </article>
+            ))}
+          </div>
+          <div className="trace-context">
+            <strong>SESSION CONTEXT</strong>
+            {readOnly ? <span>Imported bundle only · live Task Queue/Event Log/agent state unavailable.</span> : <>
+              <span><b>TASKS:</b> {relatedTasks.map(task => task.title).join(' · ') || '—'}</span>
+              <span><b>EVENT LOG:</b> {relatedEvents.map(event => event.message).join(' · ') || '—'}</span>
+              <span><b>AGENTS:</b> {relatedAgents.map(agent => `${agent.id}:${agent.status}`).join(' · ') || '—'}</span>
+            </>}
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }

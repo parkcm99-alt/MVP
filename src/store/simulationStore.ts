@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { Agent, AgentRole, AgentStatus, SimEvent, SimTask, TaskStatus, TaskPriority, Position, EventType } from '@/types';
 import { AGENTS_INIT } from '@/lib/simulation/config';
 import { upsertAgent, upsertTask } from '@/lib/supabase/persistence';
+import { getSessionId } from '@/lib/supabase/session';
 import type { AgentRow, TaskRow } from '@/lib/supabase/types';
 
 interface SimulationStore {
@@ -56,7 +57,8 @@ const INITIAL_STATE = () => ({
   isRunning: false,
 });
 
-const MAX_VISIBLE_EVENTS = 200;
+// Keep a bounded local history; EventLog alone applies the requested 200-row render limit.
+const MAX_LOCAL_EVENTS = 1000;
 
 export const useSimStore = create<SimulationStore>((set, get) => ({
   ...INITIAL_STATE(),
@@ -91,7 +93,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
   },
 
   addTask: (t) => {
-    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now() };
+    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now(), sessionId: t.sessionId ?? getSessionId() };
     set(s => ({ tasks: [...s.tasks, newTask] }));
     void upsertTask(newTask);
     return newTask;
@@ -99,7 +101,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
 
   // Debug findings must never be persisted or broadcast.
   addLocalTask: (t) => {
-    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now() };
+    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now(), sessionId: t.sessionId ?? getSessionId(), localOnly: true };
     set(s => ({ tasks: [...s.tasks, newTask] }));
     return newTask;
   },
@@ -109,15 +111,15 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
       tasks: s.tasks.map(t => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t)),
     }));
     const updated = get().tasks.find(t => t.id === id);
-    if (updated) void upsertTask(updated);
+    if (updated && !updated.localOnly) void upsertTask(updated);
   },
 
   addEvent: (e) =>
     set(s => ({
       events: [
-        { ...e, id: uid(), timestamp: Date.now() },
+        { ...e, id: uid(), timestamp: Date.now(), sessionId: e.sessionId ?? getSessionId() },
         ...s.events,
-      ].slice(0, MAX_VISIBLE_EVENTS),
+      ].slice(0, MAX_LOCAL_EVENTS),
     })),
 
   setRunning: (isRunning) => set({ isRunning }),
@@ -158,8 +160,9 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
         assignedTo:  row.assigned_to as AgentRole | null,
         status:      row.status   as TaskStatus,
         priority:    row.priority as TaskPriority,
-        createdAt:   Date.now(),
-        updatedAt:   Date.now(),
+        createdAt:   Date.parse(row.created_at) || Date.now(),
+        updatedAt:   Date.parse(row.updated_at) || Date.now(),
+        sessionId:   row.session_id,
       };
       if (exists) {
         return { tasks: s.tasks.map(t => t.id === row.id ? { ...t, ...mapped } : t) };

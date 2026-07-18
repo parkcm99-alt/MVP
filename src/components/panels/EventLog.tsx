@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { formatKstTime } from '@/lib/time';
 import type { EventType } from '@/types';
-import { includesKeyword, useLensStore } from '@/store/lensStore';
+import { useLensStore } from '@/store/lensStore';
 import { getSessionId } from '@/lib/supabase/session';
+import { matchesEvent } from '@/lib/debug/operationsLens';
 import LensHighlight from '@/components/debug/LensHighlight';
 import { useDebugStore } from '@/store/debugStore';
 
@@ -21,6 +22,7 @@ const TYPE_STYLE: Record<EventType, { color: string; prefix: string }> = {
 
 const EXPANDED_HEIGHT = 130;
 const COLLAPSED_HEIGHT = 28; // header only
+const MAX_RENDERED_EVENTS = 200;
 
 export default function EventLog() {
   const events    = useSimStore(s => s.events);
@@ -30,25 +32,11 @@ export default function EventLog() {
   const clearLens = useLensStore(s => s.clearAll);
   const tasks = useSimStore(s => s.tasks);
   const observedTraces = useDebugStore(s => s.observedTraces);
-  const sessionMatches = !lens.sessionId || getSessionId().includes(lens.sessionId.trim());
-  const taskScope = tasks.filter(t =>
-    (!lens.status || t.status === lens.status) &&
-    (!lens.priority || t.priority === lens.priority) &&
-    (!lens.role || t.assignedTo === lens.role)
-  );
-  const hasTaskFacet = Boolean(lens.status || lens.priority);
-  const visibleEvents = events.filter(e =>
-    sessionMatches &&
-    (!lens.role || e.agentId === lens.role) &&
-    (!lens.traceType || observedTraces.some(trace =>
-      trace.trace_type === lens.traceType && trace.agent_id === e.agentId
-    )) &&
-    (!hasTaskFacet || taskScope.some(t =>
-      e.message.toLowerCase().includes(t.title.toLowerCase()) ||
-      (t.assignedTo !== null && t.assignedTo === e.agentId)
-    )) &&
-    includesKeyword(e.message, lens.keyword)
-  );
+  // The backing state/Supabase history is untouched; only this view is limited.
+  const renderScope = events.slice(0, MAX_RENDERED_EVENTS);
+  const visibleEvents = renderScope.filter(event => matchesEvent(
+    event, lens, tasks, observedTraces, getSessionId(),
+  ));
 
   // scroll to top (newest event) on update
   useEffect(() => {
@@ -73,7 +61,7 @@ export default function EventLog() {
       <div className="panel-header" style={{ flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span>📝 EVENT LOG</span>
-          <span className="panel-badge">{visibleEvents.length}/{events.length}</span>
+          <span className="panel-badge">{visibleEvents.length}/{renderScope.length}</span>
         </div>
         <button
           className="panel-collapse-btn"

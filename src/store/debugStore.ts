@@ -49,8 +49,8 @@ interface DebugStore {
   recentAgentCalls: AgentCallSnapshot[];
   addLocalTrace: (trace: AgentTraceRow) => void;
   setObservedTraces: (traces: AgentTraceRow[]) => void;
-  highlightedTaskTitle: string | null;
-  setHighlightedTaskTitle: (title: string | null) => void;
+  highlightedTaskTitles: string[];
+  setHighlightedTaskTitles: (titles: string[]) => void;
 }
 
 const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
@@ -72,8 +72,8 @@ export const useDebugStore = create<DebugStore>((set) => ({
   recentAgentCalls: [],
   localTraces: [],
   observedTraces: [],
-  highlightedTaskTitle: null,
-  setHighlightedTaskTitle: (highlightedTaskTitle) => set({ highlightedTaskTitle }),
+  highlightedTaskTitles: [],
+  setHighlightedTaskTitles: (highlightedTaskTitles) => set({ highlightedTaskTitles: highlightedTaskTitles.slice(0, 100) }),
 
   setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
 

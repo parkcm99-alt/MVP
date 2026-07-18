@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
 import { useDebugStore } from '@/store/debugStore';
-import { includesKeyword, useLensStore } from '@/store/lensStore';
+import { useLensStore } from '@/store/lensStore';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
+import { matchesTask, titlesMatch } from '@/lib/debug/operationsLens';
 import LensHighlight from '@/components/debug/LensHighlight';
 import type { AgentRole, AgentStatus, TaskPriority, TaskStatus } from '@/types';
 
@@ -27,7 +28,8 @@ const ROLE_EMOJIS: Record<string, string> = {
 };
 
 function formatDescription(description: string): string {
-  const original = description.match(/original="([^"]+)"/)?.[1];
+  const original = description.match(/(?:^|\n)Original:\s*(.+)/)?.[1]
+    ?? description.match(/original="([^"]+)"/)?.[1];
   if (original) return original;
   return description;
 }
@@ -41,30 +43,23 @@ function formatList(value: unknown): string {
 export default function TaskQueue() {
   const tasks = useSimStore(s => s.tasks);
   const [busyRole, setBusyRole] = useState<AgentRole | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
   const addLocalTrace = useDebugStore(s => s.addLocalTrace);
   const observedTraces = useDebugStore(s => s.observedTraces);
-  const highlightedTaskTitle = useDebugStore(s => s.highlightedTaskTitle);
+  const highlightedTaskTitles = useDebugStore(s => s.highlightedTaskTitles);
   const lens = useLensStore(s => s.filters);
   const clearLens = useLensStore(s => s.clearAll);
-  const sessionMatches = !lens.sessionId || getSessionId().includes(lens.sessionId.trim());
-  const visibleTasks = tasks.filter(t =>
-    sessionMatches &&
-    (!lens.role || t.assignedTo === lens.role) &&
-    (!lens.status || t.status === lens.status) &&
-    (!lens.priority || t.priority === lens.priority) &&
-    (!lens.traceType || observedTraces.some(trace => {
-      const title = String(trace.metadata?.task_title ?? trace.metadata?.taskTitle ?? '').toLowerCase();
-      return trace.trace_type === lens.traceType &&
-        (!t.assignedTo || trace.agent_id === t.assignedTo) &&
-        (!title || t.title.toLowerCase().includes(title) || title.includes(t.title.toLowerCase()));
-    })) &&
-    includesKeyword(`${t.title} ${t.description}`, lens.keyword)
-  );
+  const currentSession = getSessionId();
+  const visibleTasks = tasks.filter(task => matchesTask(task, lens, observedTraces, currentSession));
 
   async function askAgent(role: Exclude<AgentRole, 'planner'>) {
     if (busyRole) return;
-    const task = tasks.find(item => item.assignedTo === role && item.status !== 'done')
+    const selectedTask = tasks.find(item => item.id === selectedTaskId && item.assignedTo === role);
+    const priorityScore: Record<TaskPriority, number> = { high: 3, medium: 2, low: 1 };
+    const task = selectedTask
+      ?? [...tasks].filter(item => item.assignedTo === role && item.status !== 'done')
+        .sort((a, b) => priorityScore[b.priority] - priorityScore[a.priority] || a.createdAt - b.createdAt)[0]
       ?? tasks.find(item => item.status !== 'done')
       ?? tasks[0];
     const title = task?.title ?? `${role} 검토`;
@@ -120,19 +115,20 @@ export default function TaskQueue() {
         outputTokens: typeof result.outputTokens === 'number' ? result.outputTokens : null,
       });
       const summary = typeof result.summary === 'string' ? result.summary : '응답 완료';
-      const lines: string[] = [`[${role[0].toUpperCase()}${role.slice(1)}] ${role === 'architect' ? '설계 검토' : role === 'developer' ? '구현 계획' : role === 'reviewer' ? '코드 리뷰' : '테스트 계획'} 완료: ${summary}`];
-      if (role === 'architect') lines.push(`architectureNotes: ${formatList(result.architectureNotes)}`);
+      // eventBus supplies the single [Agent] prefix for display and Supabase events.
+      const lines: string[] = [`${role === 'architect' ? '설계 검토' : role === 'developer' ? '구현 계획' : role === 'reviewer' ? '코드 리뷰' : '테스트 계획'} 완료: ${summary}`];
+      if (role === 'architect') lines.push(`설계 노트: ${formatList(result.architectureNotes)}`);
       if (role === 'developer') {
-        lines.push(`[Developer] 수정 예상 파일: ${formatList(result.filesToChange)}`);
-        lines.push(`[Developer] 테스트 계획: ${formatList(result.testPlan)}`);
+        lines.push(`수정 예상 파일: ${formatList(result.filesToChange)}`);
+        lines.push(`테스트 계획: ${formatList(result.testPlan)}`);
       }
       if (role === 'reviewer') {
-        lines.push(`[Reviewer] 수정 권장사항: ${formatList(result.suggestedChanges)}`);
-        lines.push(`[Reviewer] 승인 상태: ${String(result.approvalStatus ?? 'needs_more_info')}`);
+        lines.push(`수정 권장사항: ${formatList(result.suggestedChanges)}`);
+        lines.push(`승인 상태: ${String(result.approvalStatus ?? 'needs_more_info')}`);
       }
       if (role === 'qa') {
-        lines.push(`[QA] 테스트 케이스: ${formatList(result.testCases)}`);
-        lines.push(`[QA] 최종 검증 상태: ${String(result.finalStatus ?? 'needs_more_testing')}`);
+        lines.push(`테스트 케이스: ${formatList(result.testCases)}`);
+        lines.push(`최종 검증 상태: ${String(result.finalStatus ?? 'needs_more_testing')}`);
       }
       lines.forEach(message => eventBus.emit('agent.message', { agentId: role, data: { message } }));
       useSimStore.getState().setSpeech(role, summary.slice(0, 70));
@@ -150,7 +146,7 @@ export default function TaskQueue() {
         metadata: { action: 'ask_agent', askAgent: true, task_title: title, traceRecorded: false },
         created_at: new Date().toISOString(),
       });
-      eventBus.emit('agent.message', { agentId: role, data: { message: `[${role}] API 실패 · mock simulation 유지` } });
+      eventBus.emit('agent.message', { agentId: role, data: { message: 'API 실패 · mock simulation 유지' } });
       useSimStore.getState().setSpeech(role, '호출 실패 · mock simulation 유지');
     } finally {
       useSimStore.getState().setStatus(role, previousStatus);
@@ -186,6 +182,11 @@ export default function TaskQueue() {
           </button>
         ))}
       </div>
+      <div style={{ fontSize: 8, color: '#64748b', padding: '3px 7px', borderBottom: '1px solid #1e293b' }}>
+        {selectedTaskId && tasks.some(task => task.id === selectedTaskId)
+          ? '선택 task를 해당 Ask Agent 버튼으로 검토 · 다시 클릭해 해제'
+          : 'task를 선택하면 해당 역할의 Ask Agent에 전달됩니다'}
+      </div>
 
       <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {visibleTasks.length === 0 && <span style={{ color: '#64748b', fontSize: 10 }}>No tasks match · use Clear all</span>}
@@ -201,6 +202,16 @@ export default function TaskQueue() {
               {group.map(task => (
                 <div
                   key={task.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selectedTaskId === task.id}
+                  onClick={() => setSelectedTaskId(value => value === task.id ? null : task.id)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setSelectedTaskId(value => value === task.id ? null : task.id);
+                    }
+                  }}
                   style={{
                     background: style.bg,
                     border: `1px solid ${style.text}33`,
@@ -211,14 +222,16 @@ export default function TaskQueue() {
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 2,
-                    boxShadow: highlightedTaskTitle && task.title.toLowerCase().includes(highlightedTaskTitle.toLowerCase())
+                    cursor: 'pointer',
+                    boxShadow: highlightedTaskTitles.some(title => titlesMatch(task.title, title))
                       ? '0 0 0 2px #FBBF24, 0 0 12px #FBBF2466'
-                      : undefined,
+                      : selectedTaskId === task.id ? '0 0 0 1px #67E8F9' : undefined,
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
                     <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
                       <LensHighlight text={task.title} keyword={lens.keyword} />
+                      {task.localOnly && <span style={{ color: '#FBBF24', fontSize: 8 }}> · LOCAL</span>}
                     </span>
                     <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
                       {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}

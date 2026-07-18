@@ -15,13 +15,13 @@ interface InsertAgentTraceParams {
   metadata?: Record<string, unknown> | null;
 }
 
-const SENSITIVE_METADATA_KEYS = ['api_key', 'apikey', 'authorization', 'password', 'secret', 'token'];
 const MAX_SAFE_ERROR_BODY_LENGTH = 600;
+const SECRET_VALUE = /(?:sk-(?:ant-|proj-)?[a-z0-9_-]{12,}|sb_(?:secret|publishable)_[a-z0-9_-]{12,}|bearer\s+\S+|eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_.-]{10,}|(?:api[_ -]?key|authorization|password|secret|service[_ -]?role|(?:access|refresh)[_ -]?token)\s*[:=]\s*\S+)/i;
 
 function getSupabaseRestConfig(): { url?: string; key?: string } {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
 
   const isServer = typeof window === 'undefined';
 
@@ -31,7 +31,7 @@ function getSupabaseRestConfig(): { url?: string; key?: string } {
 
   return {
     url,
-    key: isServer ? serviceRoleKey ?? publicKey : publicKey,
+    key: isServer ? serviceRoleKey || publicKey : publicKey,
   };
 }
 
@@ -44,17 +44,27 @@ function resolveSessionId(sessionId?: string): string {
 
 function isSensitiveMetadataKey(key: string): boolean {
   const normalized = key.toLowerCase().replace(/[\s-]/g, '_');
-  return SENSITIVE_METADATA_KEYS.some(sensitiveKey => normalized.includes(sensitiveKey));
+  if (normalized === 'input_tokens' || normalized === 'output_tokens') return false;
+  return /api_?key|authorization|bearer|credential|password|secret|service_?role|(?:^|_)token(?:$|_)|access_?token|refresh_?token|private_?key|anon_?key/.test(normalized);
+}
+
+function sanitizeMetadataValue(value: unknown, key = '', depth = 0): unknown {
+  if (isSensitiveMetadataKey(key)) return '[REDACTED]';
+  if (typeof value === 'string') return SECRET_VALUE.test(value) ? '[REDACTED]' : value.slice(0, 1000);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean' || value === null) return value;
+  if (depth >= 5) return '[TRUNCATED]';
+  if (Array.isArray(value)) return value.slice(0, 30).map(item => sanitizeMetadataValue(item, '', depth + 1));
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value).slice(0, 40)
+      .filter(([entryKey, entryValue]) => entryValue !== undefined && !['__proto__', 'constructor', 'prototype'].includes(entryKey))
+      .map(([entryKey, entryValue]) => [entryKey.slice(0, 100), sanitizeMetadataValue(entryValue, entryKey, depth + 1)]),
+  );
+  return null;
 }
 
 function sanitizeMetadata(metadata?: Record<string, unknown> | null): Record<string, unknown> | null {
-  if (!metadata) return null;
-
-  return Object.fromEntries(
-    Object.entries(metadata).filter(([key, value]) => (
-      value !== undefined && !isSensitiveMetadataKey(key)
-    )),
-  );
+  return metadata ? sanitizeMetadataValue(metadata) as Record<string, unknown> : null;
 }
 
 function nullableNumber(value: number | null | undefined): number | null {
@@ -64,6 +74,7 @@ function nullableNumber(value: number | null | undefined): number | null {
 function redactSensitiveText(value: string): string {
   return value
     .replace(/sk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-[redacted]')
+    .replace(/bearer\s+[^\s",}]+/gi, 'Bearer [redacted]')
     .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, '[redacted_jwt]')
     .replace(
       /((?:api[_-]?key|authorization|password|secret|token)\s*[:=]\s*)["']?[^"',\s}]+/gi,

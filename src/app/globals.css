@@ -514,11 +514,50 @@ html, body {
     #050A12;
 }
 .debug-panel--collapsed { height: 30px; }
+/* Open as an operator overlay so the timeline remains usable on short screens. */
+.debug-panel:not(.debug-panel--collapsed) {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  width: min(440px, calc(100vw - 12px));
+  height: min(72vh, 620px);
+  border-left: 1px solid var(--border-bright);
+  box-shadow: -8px -4px 28px rgba(0,0,0,.45);
+}
 .task-queue-panel { min-height: 110px; }
+.operations-lens {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #07111F;
+  border-bottom: 1px solid #1E293B;
+  font-size: 9px;
+}
+.operations-lens strong { color: #93C5FD; letter-spacing: .5px; white-space: nowrap; }
+.operations-lens select,
+.operations-lens input,
+.operations-lens button,
+.trace-session-select {
+  min-width: 0;
+  background: #0B1728;
+  color: #CBD5E1;
+  border: 1px solid #334155;
+  border-radius: 2px;
+  font-family: 'Courier New', monospace;
+  font-size: 9px;
+  padding: 2px 3px;
+}
+.operations-lens select { max-width: 100px; }
+.operations-lens input { width: 105px; }
+.operations-lens button { cursor: pointer; color: #93C5FD; }
+.operations-lens button:hover { border-color: var(--accent); }
 @media (max-height: 800px) {
   .agent-status-panel { height: 220px; }
   .cmd-center { height: 130px; }
-  .debug-panel:not(.debug-panel--collapsed) { height: 240px; }
+  .debug-panel:not(.debug-panel--collapsed) { height: min(76vh, 585px); }
 }
 .debug-panel-header {
   height: 30px;
@@ -535,6 +574,7 @@ html, body {
 }
 .debug-panel-body {
   flex: 1;
+  min-height: 0;
   padding: 8px 10px 10px;
   display: flex;
   flex-direction: column;
@@ -675,6 +715,24 @@ html, body {
   color: var(--text-dim);
   font-size: 7px;
 }
+.trace-session-select { width: 100%; font-size: 8px; }
+.trace-actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.trace-groups,
+.trace-context {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px;
+  color: #94A3B8;
+  background: rgba(15,23,42,.48);
+  border: 1px solid rgba(51,65,85,.58);
+  font-size: 8px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.trace-groups strong,
+.trace-context strong { color: #CBD5E1; font-size: 8px; }
+.trace-context b { color: #93C5FD; }
 .trace-message,
 .trace-empty {
   padding: 6px;
