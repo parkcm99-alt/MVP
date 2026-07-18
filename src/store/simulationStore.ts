@@ -1,0 +1,209 @@
+import { create } from 'zustand';
+import type { Agent, AgentRole, AgentStatus, SimEvent, SimTask, TaskStatus, TaskPriority, Position, EventType } from '@/types';
+import { AGENTS_INIT } from '@/lib/simulation/config';
+import { upsertAgent, upsertTask } from '@/lib/supabase/persistence';
+import { getSessionId } from '@/lib/supabase/session';
+import type { AgentRow, TaskRow } from '@/lib/supabase/types';
+
+interface SimulationStore {
+  agents: Record<AgentRole, Agent>;
+  tasks: SimTask[];
+  events: SimEvent[];
+  isRunning: boolean;
+
+  moveAgent:    (id: AgentRole, pos: Position) => void;
+  setStatus:    (id: AgentRole, status: AgentStatus) => void;
+  setSpeech:    (id: AgentRole, speech: string | null) => void;
+  setTask:      (id: AgentRole, task: string | null) => void;
+  bumpCompleted:(id: AgentRole) => void;
+
+  addTask:    (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => SimTask;
+  /** Debug findings are intentionally never written to Supabase. */
+  addLocalTask: (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt' | 'localOnly'>) => SimTask;
+  updateTask: (id: string, patch: Partial<SimTask>) => void;
+
+  addEvent: (e: Omit<SimEvent, 'id' | 'timestamp'>) => void;
+
+  setRunning:  (v: boolean) => void;
+  resetStore:  () => void;
+
+  /**
+   * Sync-only mutations — called from the Realtime subscription path.
+   * These update Zustand directly WITHOUT writing back to Supabase,
+   * preventing echo loops and cross-session data corruption.
+   */
+  syncAgent: (row: AgentRow) => void;
+  syncTask:  (row: TaskRow)  => void;
+}
+
+const buildInitialAgents = (): Record<AgentRole, Agent> =>
+  Object.fromEntries(
+    AGENTS_INIT.map(cfg => [
+      cfg.id,
+      {
+        ...cfg,
+        position:       { ...cfg.deskPosition },
+        status:         'idle' as AgentStatus,
+        currentTask:    null,
+        speech:         null,
+        completedTasks: 0,
+      },
+    ]),
+  ) as Record<AgentRole, Agent>;
+
+const INITIAL_STATE = () => ({
+  agents:    buildInitialAgents(),
+  tasks:     [] as SimTask[],
+  events:    [] as SimEvent[],
+  isRunning: false,
+});
+
+export const useSimStore = create<SimulationStore>((set, get) => ({
+  ...INITIAL_STATE(),
+
+  moveAgent: (id, pos) => {
+    set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], position: pos } } }));
+    void upsertAgent(get().agents[id]);
+  },
+
+  setStatus: (id, status) => {
+    set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], status } } }));
+    void upsertAgent(get().agents[id]);
+  },
+
+  // speech is transient UI state — not persisted
+  setSpeech: (id, speech) =>
+    set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], speech } } })),
+
+  setTask: (id, currentTask) => {
+    set(s => ({ agents: { ...s.agents, [id]: { ...s.agents[id], currentTask } } }));
+    void upsertAgent(get().agents[id]);
+  },
+
+  bumpCompleted: (id) => {
+    set(s => ({
+      agents: {
+        ...s.agents,
+        [id]: { ...s.agents[id], completedTasks: s.agents[id].completedTasks + 1 },
+      },
+    }));
+    void upsertAgent(get().agents[id]);
+  },
+
+  addTask: (t) => {
+    const now = Date.now();
+    const newTask: SimTask = {
+      ...t,
+      id: uuid(),
+      createdAt: now,
+      updatedAt: now,
+      sessionId: t.sessionId ?? getSessionId(),
+      origin: t.origin ?? 'simulation',
+    };
+    set(s => ({ tasks: [...s.tasks, newTask] }));
+    if (!newTask.localOnly) void upsertTask(newTask);
+    return newTask;
+  },
+
+  addLocalTask: (t) => {
+    const now = Date.now();
+    const newTask: SimTask = {
+      ...t,
+      id: uuid(),
+      createdAt: now,
+      updatedAt: now,
+      sessionId: t.sessionId ?? getSessionId(),
+      origin: t.origin ?? 'debug-finding',
+      localOnly: true,
+    };
+    set(s => ({ tasks: [...s.tasks, newTask] }));
+    return newTask;
+  },
+
+  updateTask: (id, patch) => {
+    set(s => ({
+      tasks: s.tasks.map(t => (t.id === id ? { ...t, ...patch, updatedAt: Date.now() } : t)),
+    }));
+    const updated = get().tasks.find(t => t.id === id);
+    if (updated && !updated.localOnly) void upsertTask(updated);
+  },
+
+  addEvent: (e) =>
+    set(s => ({
+      events: [
+        { ...e, id: uid(), timestamp: Date.now(), sessionId: e.sessionId ?? getSessionId() },
+        ...s.events,
+      ],
+    })),
+
+  setRunning: (isRunning) => set({ isRunning }),
+
+  // Reset clears local state only — Supabase rows are session-scoped and left as-is
+  // (no DELETE permission for anon key; stale rows expire naturally with the session)
+  resetStore: () => set(INITIAL_STATE()),
+
+  // ── Realtime sync path (no persistence) ─────────────────────────────────────
+
+  syncAgent: (row) => {
+    const id = row.id as AgentRole;
+    set(s => {
+      const agent = s.agents[id];
+      if (!agent) return s; // unknown role — ignore
+      return {
+        agents: {
+          ...s.agents,
+          [id]: {
+            ...agent,
+            status:         row.status    as AgentStatus,
+            currentTask:    row.current_task,
+            position:       { x: row.position_x, y: row.position_y },
+            completedTasks: row.completed_tasks,
+          },
+        },
+      };
+    });
+  },
+
+  syncTask: (row) => {
+    set(s => {
+      const exists = s.tasks.some(t => t.id === row.id);
+      const mapped: SimTask = {
+        id:          row.id,
+        title:       row.title,
+        description: row.description,
+        assignedTo:  row.assigned_to as AgentRole | null,
+        status:      row.status   as TaskStatus,
+        priority:    row.priority as TaskPriority,
+        createdAt:   Date.parse(row.created_at) || Date.now(),
+        updatedAt:   Date.parse(row.updated_at) || Date.now(),
+        sessionId:   row.session_id,
+        origin:      row.description.includes('[planner-generated]') ? 'planner-generated' : 'simulation',
+      };
+      if (exists) {
+        return { tasks: s.tasks.map(t => t.id === row.id ? { ...t, ...mapped } : t) };
+      }
+      return { tasks: [...s.tasks, mapped] };
+    });
+  },
+}));
+
+// ── ID generators ──────────────────────────────────────────────────────────────
+
+/** UUID v4 — used for task IDs (must match `uuid` column type in Supabase). */
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/** Short UID — used for in-memory event IDs only (not persisted). */
+function uid() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+// Re-export EventType so engine can import from one place
+export type { EventType };
