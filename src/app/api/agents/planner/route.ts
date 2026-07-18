@@ -1,0 +1,260 @@
+import { getAgentRolePrompt } from '@/lib/agents/prompts';
+import { claudeClient } from '@/lib/llm/claudeClient';
+import { cleanEnum, cleanStringArray, cleanText, parseJsonObject } from '@/lib/llm/json';
+import { mockClaude } from '@/lib/llm/mockClaude';
+import { insertAgentTrace } from '@/lib/supabase/traces';
+import type { LlmResponse, PlannerAgentResponse } from '@/lib/llm/types';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+interface PlannerRequestBody {
+  taskTitle?: unknown;
+  taskDescription?: unknown;
+  sessionId?: unknown;
+  session_id?: unknown;
+}
+
+const ROLE = 'planner' as const;
+
+function normalizeText(value: unknown, fallback: string): string {
+  return cleanText(value, fallback);
+}
+
+function normalizeSessionId(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim())
+    ? value.trim() : undefined;
+}
+
+function safePlannerResponse(
+  patch: Partial<PlannerAgentResponse> = {},
+): PlannerAgentResponse {
+  return {
+    ok: true,
+    provider: 'mock',
+    role: ROLE,
+    summary: 'Planner가 mock 모드에서 스프린트 작업을 점검했습니다.',
+    steps: [
+      '요구사항을 작게 나누고 우선순위를 확인합니다.',
+      'Architect에게 구현 경계와 데이터 흐름 검토를 넘깁니다.',
+      'Developer/QA가 바로 착수할 수 있도록 완료 기준을 정리합니다.',
+    ],
+    risks: ['요구사항 범위가 넓으면 일정 추정이 흔들릴 수 있습니다.'],
+    nextAgent: 'architect',
+    ...patch,
+  };
+}
+
+function withDevDebug(
+  response: PlannerAgentResponse,
+  debugReason?: string,
+  traceRecorded?: boolean,
+): PlannerAgentResponse {
+  const responseWithTrace = typeof traceRecorded === 'boolean'
+    ? { ...response, traceRecorded }
+    : response;
+
+  if (process.env.NODE_ENV === 'production') return responseWithTrace;
+
+  return {
+    ...responseWithTrace,
+    ...(debugReason ? { debugReason } : {}),
+  };
+}
+
+function withPlannerTelemetry(
+  response: PlannerAgentResponse,
+  llm: LlmResponse,
+  traceRecorded: boolean | undefined,
+  latencyMs: number | null,
+): PlannerAgentResponse {
+  return {
+    ...response,
+    traceRecorded: traceRecorded ?? response.traceRecorded ?? false,
+    model: llm.model ?? null,
+    latencyMs,
+    inputTokens: llm.inputTokens ?? null,
+    outputTokens: llm.outputTokens ?? null,
+  };
+}
+
+function parsePlannerContent(llm: LlmResponse): { response: PlannerAgentResponse; debugReason?: string } {
+  const fallback = safePlannerResponse({
+    provider: llm.provider,
+    summary: normalizeText(llm.content, 'Planner 응답을 JSON으로 파싱하지 못했습니다.'),
+  });
+
+  const parsed = parsePlannerContentObject(llm.content);
+  if (!parsed) {
+    console.warn('Claude planner response warning: json_parse_failed');
+    return {
+      response: fallback,
+      debugReason: 'json_parse_failed',
+    };
+  }
+
+  const base = safePlannerResponse();
+  return {
+    response: safePlannerResponse({
+      provider: llm.provider,
+      summary: normalizeText(parsed.summary, base.summary),
+      steps: cleanStringArray(parsed.steps, base.steps, 4),
+      risks: cleanStringArray(parsed.risks, base.risks, 3),
+      nextAgent: cleanEnum(parsed.nextAgent, ['planner', 'architect', 'developer', 'reviewer', 'qa'] as const, 'architect'),
+    }),
+  };
+}
+
+function parsePlannerContentObject(content: string) {
+  return parseJsonObject(content);
+}
+
+function buildPlannerSystemPrompt(basePrompt: string): string {
+  return [
+    basePrompt,
+    'You must return raw JSON only.',
+    'Do not use markdown.',
+    'Do not wrap the response in ```json fences.',
+    'Do not add prose before or after the JSON object.',
+    'The entire response must be parseable by JSON.parse.',
+    'Use exactly this JSON object shape:',
+    '{"summary":"string","steps":["string"],"risks":["string"],"nextAgent":"architect"}',
+    'Use nextAgent="architect" unless the task is already fully planned.',
+  ].join('\n');
+}
+
+function respondWithPlannerContent(llm: LlmResponse, traceRecorded?: boolean, latencyMs: number | null = null) {
+  const parsed = parsePlannerContent(llm);
+  return Response.json(withDevDebug(
+    withPlannerTelemetry(parsed.response, llm, traceRecorded, latencyMs),
+    parsed.debugReason ?? llm.fallbackReason,
+    traceRecorded,
+  ));
+}
+
+async function recordPlannerLlmTrace(
+  llm: LlmResponse,
+  taskTitle: string,
+  latencyMs: number,
+  sessionId?: string,
+): Promise<boolean> {
+  if (llm.provider !== 'claude') return false;
+
+  try {
+    const traceRecorded = await insertAgentTrace({
+      sessionId,
+      agentId: ROLE,
+      traceType: 'llm_call',
+      inputTokens: llm.inputTokens ?? null,
+      outputTokens: llm.outputTokens ?? null,
+      latencyMs,
+      model: llm.model ?? null,
+      metadata: {
+        provider: 'claude',
+        task_title: taskTitle,
+      },
+    });
+    return traceRecorded;
+  } catch {
+    console.warn('[Supabase] planner llm_call trace failed: trace_insert_failed');
+    return false;
+  }
+}
+
+async function buildMockResponse(taskTitle: string, taskDescription: string): Promise<PlannerAgentResponse> {
+  const mock = await mockClaude.complete({
+    agentRole: ROLE,
+    messages: [
+      {
+        role: 'user',
+        content: `Task: ${taskTitle}\nDescription: ${taskDescription}`,
+      },
+    ],
+    maxTokens: 220,
+  });
+
+  return safePlannerResponse({
+    summary: mock.content,
+    provider: 'mock',
+    traceRecorded: false,
+    model: mock.model,
+    latencyMs: mock.latencyMs,
+    inputTokens: mock.inputTokens,
+    outputTokens: mock.outputTokens,
+  });
+}
+
+export async function POST(request: Request) {
+  let body: PlannerRequestBody;
+
+  try {
+    body = await request.json() as PlannerRequestBody;
+  } catch {
+    return Response.json(
+      safePlannerResponse({
+        ok: false,
+        summary: 'Invalid JSON body. Expected { taskTitle, taskDescription }.',
+      }),
+      { status: 400 },
+    );
+  }
+
+  const taskTitle = normalizeText(body.taskTitle, 'Sprint planning');
+  const taskDescription = normalizeText(
+    body.taskDescription,
+    'Review the current sprint and suggest the safest next handoff.',
+  );
+  const sessionId = normalizeSessionId(body.sessionId ?? body.session_id);
+
+  const normalizedLiveFlag = process.env.ENABLE_LIVE_LLM?.trim().toLowerCase();
+  const liveEnabled = normalizedLiveFlag === 'true';
+  const hasApiKey = Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+
+  if (!liveEnabled) {
+    return Response.json(withDevDebug(
+      await buildMockResponse(taskTitle, taskDescription),
+      `live_disabled:${normalizedLiveFlag ?? 'missing'}`,
+      false,
+    ));
+  }
+
+  if (!hasApiKey) {
+    return Response.json(withDevDebug(
+      await buildMockResponse(taskTitle, taskDescription),
+      'missing_api_key',
+      false,
+    ));
+  }
+
+  const plannerPrompt = getAgentRolePrompt(ROLE);
+  const claudeStartedAt = Date.now();
+  const llm = await claudeClient.complete({
+    agentRole: ROLE,
+    systemPrompt: buildPlannerSystemPrompt(plannerPrompt.systemPrompt),
+    messages: [
+      {
+        role: 'user',
+        content: [
+          `Task title: ${taskTitle}`,
+          `Task description: ${taskDescription}`,
+          'Create a short planning summary, 2-4 execution steps, 0-3 risks, and the next agent.',
+          'Return only the JSON object. No markdown. No code fences.',
+        ].join('\n'),
+      },
+    ],
+    maxTokens: 320,
+  });
+  const claudeLatencyMs = Date.now() - claudeStartedAt;
+
+  if (llm.provider !== 'claude') {
+    return Response.json(withDevDebug(
+      withPlannerTelemetry(safePlannerResponse({ provider: 'mock', summary: llm.content }), llm, false, claudeLatencyMs),
+      llm.fallbackReason,
+      false,
+    ));
+  }
+
+  const traceRecorded = await recordPlannerLlmTrace(llm, taskTitle, claudeLatencyMs, sessionId);
+
+  return respondWithPlannerContent(llm, traceRecorded, claudeLatencyMs);
+}
