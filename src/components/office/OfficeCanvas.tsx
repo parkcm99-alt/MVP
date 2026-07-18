@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useSimStore } from '@/store/simulationStore';
+import { useOperationsStore } from '@/store/operationsStore';
 import { simulationEngine } from '@/lib/simulation/engine';
 import { OFFICE_HEIGHT, OFFICE_WIDTH } from '@/lib/simulation/config';
 import type { AgentRole, AgentStatus } from '@/types';
@@ -121,6 +122,7 @@ function AgentDetailCard({ agentId, onClose }: AgentCardProps) {
 export default function OfficeCanvas() {
   const agents    = useSimStore(s => s.agents);
   const isRunning = useSimStore(s => s.isRunning);
+  const readOnlyAnalysis = useOperationsStore(s => s.readOnlyAnalysis);
   const started      = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef    = useRef<HTMLDivElement>(null);
@@ -165,6 +167,7 @@ export default function OfficeCanvas() {
           <button
             className="ctrl-btn"
             onClick={() => isRunning ? simulationEngine.stop() : simulationEngine.start()}
+            disabled={readOnlyAnalysis}
           >
             {isRunning ? '⏸ PAUSE' : '⏵ RESUME'}
           </button>

@@ -50,6 +50,7 @@ export function useRealtimeSync() {
             type:       r.type        as EventType,
             message:    r.message,
             sessionId:  r.session_id,
+            metadata:   r.metadata,
           });
         },
       )

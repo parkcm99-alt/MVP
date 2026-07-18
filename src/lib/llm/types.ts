@@ -78,53 +78,75 @@ export interface AgentRolePrompt {
   label:        string;
 }
 
-export interface PlannerAgentResponse {
+export interface AgentResponseTelemetry {
+  debugReason?: string;
+  traceRecorded?: boolean;
+  model?: string | null;
+  latencyMs?: number | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}
+
+export interface PlannerAgentResponse extends AgentResponseTelemetry {
   ok: boolean;
   provider: 'mock' | 'claude';
   role: 'planner';
   summary: string;
   steps: string[];
   risks: string[];
-  nextAgent: string;
-  debugReason?: string;
-  traceRecorded?: boolean;
-  model?: string | null;
-  latencyMs?: number | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
+  nextAgent: 'architect' | 'developer' | 'reviewer' | 'qa' | 'planner';
 }
 
-export interface AgentTelemetry {
-  traceRecorded?: boolean;
-  model?: string | null;
-  latencyMs?: number | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-  debugReason?: string;
-}
-
-export interface ArchitectAgentResponse extends AgentTelemetry {
-  ok: boolean; provider: LlmProvider; role: 'architect'; summary: string;
-  architectureNotes: string[]; dataFlow: string[]; risks: string[];
+export interface ArchitectAgentResponse extends AgentResponseTelemetry {
+  ok: boolean;
+  provider: LlmProvider;
+  role: 'architect';
+  summary: string;
+  architectureNotes: string[];
+  dataFlow: string[];
+  risks: string[];
   nextAgent: 'developer' | 'reviewer' | 'qa';
 }
 
-export interface DeveloperAgentResponse extends AgentTelemetry {
-  ok: boolean; provider: LlmProvider; role: 'developer'; summary: string;
-  implementationPlan: string[]; filesToChange: string[]; testPlan: string[]; risks: string[];
+export interface DeveloperAgentResponse extends AgentResponseTelemetry {
+  ok: boolean;
+  provider: LlmProvider;
+  role: 'developer';
+  summary: string;
+  implementationPlan: string[];
+  filesToChange: string[];
+  testPlan: string[];
+  risks: string[];
   nextAgent: 'reviewer' | 'qa';
 }
 
-export interface ReviewerAgentResponse extends AgentTelemetry {
-  ok: boolean; provider: LlmProvider; role: 'reviewer'; summary: string;
-  reviewFindings: string[]; suggestedChanges: string[]; risks: string[];
+export interface ReviewerAgentResponse extends AgentResponseTelemetry {
+  ok: boolean;
+  provider: LlmProvider;
+  role: 'reviewer';
+  summary: string;
+  reviewFindings: string[];
+  suggestedChanges: string[];
+  risks: string[];
   approvalStatus: 'approved' | 'changes_requested' | 'needs_more_info';
   nextAgent: 'developer' | 'qa';
 }
 
-export interface QaAgentResponse extends AgentTelemetry {
-  ok: boolean; provider: LlmProvider; role: 'qa'; summary: string;
-  testCases: string[]; regressionChecks: string[]; qualityRisks: string[];
+export interface QaAgentResponse extends AgentResponseTelemetry {
+  ok: boolean;
+  provider: LlmProvider;
+  role: 'qa';
+  summary: string;
+  testCases: string[];
+  regressionChecks: string[];
+  qualityRisks: string[];
   finalStatus: 'passed' | 'failed' | 'needs_more_testing';
   nextAgent: 'developer' | 'reviewer' | 'planner';
 }
+
+export type AgentApiResponse =
+  | PlannerAgentResponse
+  | ArchitectAgentResponse
+  | DeveloperAgentResponse
+  | ReviewerAgentResponse
+  | QaAgentResponse;

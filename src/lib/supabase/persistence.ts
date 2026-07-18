@@ -15,8 +15,10 @@ import { getSessionId } from './session';
 import { reportPersistenceError } from './errorTracker';
 import type { AgentInsert, TaskInsert } from './types';
 import type { Agent, SimTask } from '@/types';
+import { useOperationsStore } from '@/store/operationsStore';
 
 export async function upsertAgent(agent: Agent): Promise<void> {
+  if (typeof window !== 'undefined' && useOperationsStore.getState().readOnlyAnalysis) return;
   if (!isSupabaseConfigured) return;
   const sb = getSupabaseClient();
   if (!sb) return;
@@ -44,13 +46,14 @@ export async function upsertAgent(agent: Agent): Promise<void> {
 }
 
 export async function upsertTask(task: SimTask): Promise<void> {
-  if (!isSupabaseConfigured || task.localOnly) return;
+  if (typeof window !== 'undefined' && useOperationsStore.getState().readOnlyAnalysis) return;
+  if (!isSupabaseConfigured) return;
   const sb = getSupabaseClient();
   if (!sb) return;
 
   const row: TaskInsert = {
     id:          task.id,
-    session_id:  task.sessionId ?? getSessionId(),
+    session_id:  getSessionId(),
     title:       task.title,
     description: task.description,
     assigned_to: task.assignedTo,

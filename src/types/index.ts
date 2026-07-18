@@ -63,10 +63,11 @@ export interface SimTask {
   priority: TaskPriority;
   createdAt: number;
   updatedAt: number;
-  /** Client-only correlation context; not a new database column. */
+  /** Local correlation context; the existing Supabase schema stays unchanged. */
   sessionId?: string;
-  /** Debug findings are never persisted or broadcast. */
+  source?: 'simulation' | 'planner-generated' | 'debug-finding';
   localOnly?: boolean;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SimEvent {
@@ -77,8 +78,9 @@ export interface SimEvent {
   agentColor: string;
   type: EventType;
   message: string;
-  /** Preserved from Realtime rows for read-only Operations Lens correlation. */
   sessionId?: string;
+  metadata?: Record<string, unknown> | null;
+  localOnly?: boolean;
 }
 
 // ──────────────────────────────────────────────

@@ -36,11 +36,11 @@ function getSupabaseConfig(): { url?: string; key?: string; status: SupabaseConf
     return { url, key, status: 'invalid_url' };
   }
 
-  // Accept legacy anon JWTs and the newer browser-safe publishable key format only.
+  // Legacy anon JWTs and newer publishable keys are safe browser credentials.
   // Anthropic/OpenAI/service secrets must never sit in NEXT_PUBLIC_*.
-  const isLegacyAnon = key.startsWith('eyJ') && key.split('.').length === 3;
-  const isPublishable = key.startsWith('sb_publishable_');
-  if (!isLegacyAnon && !isPublishable) {
+  const isAnonJwt = key.startsWith('eyJ') && key.split('.').length === 3;
+  const isPublishableKey = key.startsWith('sb_publishable_');
+  if (!isAnonJwt && !isPublishableKey) {
     return { url, key, status: 'invalid_key' };
   }
 

@@ -1,14 +1,16 @@
 import { create } from 'zustand';
+import { createLocalTrace } from '@/lib/debug/localTraces';
 import { getSupabaseConfigStatus } from '@/lib/supabase/client';
-import type { LlmProvider } from '@/lib/llm/types';
-import type { AgentTraceRow } from '@/lib/supabase/types';
+import { uuid } from '@/lib/supabase/session';
+import type { AgentApiResponse, LlmProvider } from '@/lib/llm/types';
+import type { AgentRole } from '@/types';
 
 export type SupabaseDebugStatus = 'mock' | 'misconfigured' | 'connecting' | 'ready' | 'partial' | 'error';
 
-interface PlannerDebugSnapshot {
+export interface AgentDebugSnapshot {
+  role: AgentRole | null;
   provider: LlmProvider | null;
-  lastPlanAt: number | null;
-  role: string | null;
+  lastCallAt: number | null;
   traceRecorded: boolean | null;
   model: string | null;
   latencyMs: number | null;
@@ -16,47 +18,38 @@ interface PlannerDebugSnapshot {
   outputTokens: number | null;
 }
 
-interface PlannerDebugUpdate {
-  provider: LlmProvider;
-  role?: string;
-  sessionId?: string;
-  taskTitle?: string;
-  traceRecorded?: boolean | null;
-  model?: string | null;
-  latencyMs?: number | null;
-  inputTokens?: number | null;
-  outputTokens?: number | null;
-}
-
 export interface AgentCallSnapshot {
   id: string;
   sessionId: string;
-  role: string;
+  role: AgentRole;
   taskTitle: string;
-  at: number;
-  traceRecorded: boolean;
+  startedAt: number;
+  completedAt: number | null;
+  provider: LlmProvider | null;
+  traceRecorded: boolean | null;
+  model: string | null;
   latencyMs: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  finalStatus?: string;
+  approvalStatus?: string;
 }
 
 interface DebugStore {
   supabaseStatus: SupabaseDebugStatus;
-  planner: PlannerDebugSnapshot;
-  localTraces: AgentTraceRow[];
-  observedTraces: AgentTraceRow[];
+  latest: AgentDebugSnapshot;
+  calls: AgentCallSnapshot[];
   setSupabaseStatus: (status: SupabaseDebugStatus) => void;
-  recordPlannerResponse: (update: PlannerDebugUpdate) => void;
-  recordAgentResponse: (update: PlannerDebugUpdate) => void;
-  recentAgentCalls: AgentCallSnapshot[];
-  addLocalTrace: (trace: AgentTraceRow) => void;
-  setObservedTraces: (traces: AgentTraceRow[]) => void;
-  highlightedTaskTitles: string[];
-  setHighlightedTaskTitles: (titles: string[]) => void;
+  startAgentCall: (role: AgentRole, taskTitle: string, sessionId: string) => string;
+  recordAgentResponse: (callId: string, response: AgentApiResponse) => void;
+  recordAgentFailure: (callId: string) => void;
+  resetCalls: () => void;
 }
 
-const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
-  provider: null,
-  lastPlanAt: null,
+const INITIAL_LATEST: AgentDebugSnapshot = {
   role: null,
+  provider: null,
+  lastCallAt: null,
   traceRecorded: null,
   model: null,
   latencyMs: null,
@@ -64,59 +57,95 @@ const INITIAL_PLANNER_DEBUG: PlannerDebugSnapshot = {
   outputTokens: null,
 };
 
-export const useDebugStore = create<DebugStore>((set) => ({
+export const useDebugStore = create<DebugStore>((set, get) => ({
   supabaseStatus: getSupabaseConfigStatus() === 'ready'
     ? 'connecting'
     : getSupabaseConfigStatus() === 'missing' ? 'mock' : 'misconfigured',
-  planner: INITIAL_PLANNER_DEBUG,
-  recentAgentCalls: [],
-  localTraces: [],
-  observedTraces: [],
-  highlightedTaskTitles: [],
-  setHighlightedTaskTitles: (highlightedTaskTitles) => set({ highlightedTaskTitles: highlightedTaskTitles.slice(0, 100) }),
+  latest: INITIAL_LATEST,
+  calls: [],
 
-  setSupabaseStatus: (supabaseStatus) => set({ supabaseStatus }),
+  setSupabaseStatus: supabaseStatus => set({ supabaseStatus }),
 
-  recordPlannerResponse: (update) =>
-    set({
-      planner: {
-        provider: update.provider,
-        lastPlanAt: Date.now(),
-        role: update.role ?? 'planner',
-        traceRecorded: update.traceRecorded ?? null,
-        model: update.model ?? null,
-        latencyMs: update.latencyMs ?? null,
-        inputTokens: update.inputTokens ?? null,
-        outputTokens: update.outputTokens ?? null,
-      },
-    }),
-  recordAgentResponse: (update) =>
+  startAgentCall: (role, taskTitle, sessionId) => {
+    const id = uuid();
+    const startedAt = Date.now();
+    createLocalTrace({
+      sessionId,
+      agentId: role,
+      traceType: 'tool_use',
+      metadata: { action: 'ask_agent', task_title: taskTitle },
+    });
     set(state => ({
-      planner: {
-        provider: update.provider,
-        lastPlanAt: Date.now(),
-        role: update.role ?? null,
-        traceRecorded: update.traceRecorded ?? null,
-        model: update.model ?? null,
-        latencyMs: update.latencyMs ?? null,
-        inputTokens: update.inputTokens ?? null,
-        outputTokens: update.outputTokens ?? null,
-      },
-      recentAgentCalls: update.sessionId && update.role
-        ? [{
-            id: `${Date.now()}-${update.role}`,
-            sessionId: update.sessionId,
-            role: update.role,
-            taskTitle: update.taskTitle ?? '',
-            at: Date.now(),
-            traceRecorded: update.traceRecorded === true,
-            latencyMs: update.latencyMs ?? null,
-          }, ...state.recentAgentCalls].slice(0, 30)
-        : state.recentAgentCalls,
-    })),
-  addLocalTrace: (trace) =>
+      calls: [{
+        id, sessionId, role, taskTitle, startedAt,
+        completedAt: null, provider: null, traceRecorded: null,
+        model: null, latencyMs: null, inputTokens: null, outputTokens: null,
+      }, ...state.calls].slice(0, 100),
+    }));
+    return id;
+  },
+
+  recordAgentResponse: (callId, response) => {
+    const call = get().calls.find(item => item.id === callId);
+    const completedAt = Date.now();
+    const update = {
+      completedAt,
+      provider: response.provider,
+      traceRecorded: response.traceRecorded ?? false,
+      model: response.model ?? null,
+      latencyMs: response.latencyMs ?? null,
+      inputTokens: response.inputTokens ?? null,
+      outputTokens: response.outputTokens ?? null,
+      ...('finalStatus' in response ? { finalStatus: response.finalStatus } : {}),
+      ...('approvalStatus' in response ? { approvalStatus: response.approvalStatus } : {}),
+    };
+    // Preserve evidence of a real call when the database write failed; successful
+    // writes are loaded from Supabase using their canonical row id.
+    if (call && response.provider === 'claude' && !response.traceRecorded) {
+      createLocalTrace({
+        sessionId: call.sessionId,
+        agentId: call.role,
+        traceType: 'llm_call',
+        model: response.model,
+        latencyMs: response.latencyMs,
+        inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens,
+        metadata: {
+          task_title: call.taskTitle,
+          provider: 'claude',
+          traceRecorded: false,
+          ...('finalStatus' in response ? { finalStatus: response.finalStatus } : {}),
+          ...('approvalStatus' in response ? { approvalStatus: response.approvalStatus } : {}),
+        },
+      });
+    }
     set(state => ({
-      localTraces: [trace, ...state.localTraces].slice(0, 100),
-    })),
-  setObservedTraces: (observedTraces) => set({ observedTraces: observedTraces.slice(0, 100) }),
+      calls: state.calls.map(item => item.id === callId ? { ...item, ...update } : item),
+      latest: {
+        role: response.role,
+        provider: response.provider,
+        lastCallAt: completedAt,
+        traceRecorded: response.traceRecorded ?? false,
+        model: response.model ?? null,
+        latencyMs: response.latencyMs ?? null,
+        inputTokens: response.inputTokens ?? null,
+        outputTokens: response.outputTokens ?? null,
+      },
+    }));
+  },
+
+  recordAgentFailure: callId => set(state => ({
+    calls: state.calls.map(call => call.id === callId
+      ? { ...call, completedAt: Date.now(), provider: 'mock', traceRecorded: false }
+      : call),
+    latest: {
+      ...INITIAL_LATEST,
+      role: state.calls.find(call => call.id === callId)?.role ?? null,
+      provider: 'mock',
+      lastCallAt: Date.now(),
+      traceRecorded: false,
+    },
+  })),
+
+  resetCalls: () => set({ calls: [], latest: INITIAL_LATEST }),
 }));

@@ -128,8 +128,6 @@ create table public.agent_traces (
 
 create index agent_traces_session_id on public.agent_traces (session_id);
 create index agent_traces_agent_id   on public.agent_traces (agent_id);
-create index agent_traces_created_at on public.agent_traces (created_at desc);
-create index agent_traces_session_timeline on public.agent_traces (session_id, created_at desc);
 ```
 
 ---
@@ -161,7 +159,15 @@ create policy "anon read"   on public.agent_traces for select using (true);
 create policy "anon insert" on public.agent_traces for insert with check (true);
 ```
 
-서버 route는 `SUPABASE_SERVICE_ROLE_KEY`를 우선 사용하며 service role은 RLS를 bypass하므로 절대 브라우저/`NEXT_PUBLIC_*`에 노출하면 안 됩니다. 서버에 service role이 없으면 MVP 호환을 위해 anon key로 fallback합니다. Trace Viewer의 조회와 브라우저 workflow의 handoff/decision 기록에는 anon/publishable 정책이 사용됩니다. trace에는 API key·bearer token·secret을 저장하지 않으며 UPDATE/DELETE 정책은 열지 않습니다. 위 `true` 정책은 데모/MVP용으로 매우 permissive합니다. Production에서는 Supabase Auth 및 사용자/세션 소유권 기반 SELECT/INSERT/UPDATE 정책으로 교체하세요.
+### `agent_traces` RLS와 key 경계
+
+- 서버 API route의 Claude `llm_call`은 `SUPABASE_SERVICE_ROLE_KEY`를 우선 사용합니다. service role은 RLS를 우회하므로 **서버 환경 변수에만** 보관하고 절대 `NEXT_PUBLIC_`로 노출하지 않습니다.
+- 서버에 service role key가 없으면 브라우저용 anon/publishable key로 fallback하고 `missing_service_role_key`를 경고합니다. 이 fallback과 브라우저의 `handoff`/`decision` insert에는 위 MVP insert 정책이 필요합니다.
+- Trace Viewer의 최근 trace 조회에는 anon/publishable `select` 정책이 필요합니다. `agent_traces`에는 UPDATE/DELETE 정책을 열지 않습니다.
+- 이 공개 정책은 인증 없는 MVP용입니다. 실제 사용자 데이터 운영 전에는 Supabase Auth와 session/tenant 소유권을 기반으로 SELECT/INSERT 범위를 제한하고, 가능하면 trace 쓰기를 신뢰된 서버로 모으세요.
+- trace metadata는 task 제목·상태 같은 진단 정보만 허용하고 API key, bearer token, service role key, raw provider error, 사용자 secret을 저장하지 않습니다. insert 실패는 앱을 중단하지 않습니다.
+
+브라우저용 `NEXT_PUBLIC_SUPABASE_ANON_KEY`는 Supabase Dashboard → Project Settings → API Keys의 legacy `anon` public JWT 또는 `sb_publishable_...` key입니다. service role/secret key와 혼동하지 마세요.
 
 ---
 
@@ -179,5 +185,7 @@ create policy "anon insert" on public.agent_traces for insert with check (true);
 
 | 채널명 | 목적 | 이벤트 |
 |--------|------|--------|
-| `sim-multiplayer` | events/agents/tasks 변경 동기화 | postgres_changes |
+| `sim-events-changes` | events 테이블 INSERT 구독 (중복 방지: session_id 필터) | postgres_changes INSERT |
 | `_conn_check` | 연결 상태 확인 전용 (ConnectionStatus 컴포넌트) | subscribe state |
+| `agent-state` (예정) | 에이전트 상태 실시간 동기화 | postgres_changes on agents |
+| `task-updates` (예정) | 태스크 변경 동기화 | postgres_changes on tasks |

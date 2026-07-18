@@ -10,6 +10,8 @@
 
 import { useSimStore } from '@/store/simulationStore';
 import { realtimeAdapter } from '@/lib/supabase/realtime';
+import { getSessionId } from '@/lib/supabase/session';
+import { useOperationsStore } from '@/store/operationsStore';
 import type { BusEventType, BusPayload, EventType } from '@/types';
 
 // Maps bus event types → display category for EventLog / events table
@@ -51,6 +53,7 @@ function formatMessage(type: BusEventType, payload: BusPayload): string {
 
 export const eventBus = {
   emit(type: BusEventType, payload: BusPayload): void {
+    if (typeof window !== 'undefined' && useOperationsStore.getState().readOnlyAnalysis) return;
     const store     = useSimStore.getState();
     const agent     = store.agents[payload.agentId];
     const eventType = BUS_TO_DISPLAY[type];
@@ -63,6 +66,8 @@ export const eventBus = {
       agentColor: agent.primaryColor,
       type:       eventType,
       message,
+      sessionId:  getSessionId(),
+      metadata:   payload.data ?? null,
     });
 
     // 2. Supabase insert (no-op when NEXT_PUBLIC_SUPABASE_URL is not set)

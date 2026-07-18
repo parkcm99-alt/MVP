@@ -25,7 +25,7 @@ const EXPLICIT_ROLE_PATTERNS: Array<[AgentRole, RegExp]> = [
 const ROLE_KEYWORDS: Array<[AgentRole, RegExp]> = [
   ['architect', /(architect|아키텍처|구조|설계|데이터\s*흐름|구현\s*경계)/i],
   ['developer', /(developer|개발|구현|api|코드|백엔드|프론트엔드|frontend|backend)/i],
-  ['reviewer', /(reviewer|리뷰|검토|pr|코드\s*리뷰|code\s*review)/i],
+  ['reviewer', /(reviewer|리뷰|검토|\bpr\b|코드\s*리뷰|code\s*review)/i],
   ['qa', /(\bqa\b|테스트|검증|회귀|품질|test|verification|quality)/i],
   ['planner', /(요구사항|우선순위|기획|스프린트|requirement|priority|planning|sprint)/i],
 ];
@@ -52,7 +52,6 @@ function summarizeStepForRole(step: string, role: AgentRole): string {
 
   const withoutLeadingRole = cleaned.replace(/^(architect|developer|reviewer|qa|planner)\s*[:/-]\s*/i, '');
   const prefix = `${ROLE_LABELS[role]}: `;
-  // Keep the complete queue title near 20 characters, including its useful role prefix.
   const title = truncateTitle(withoutLeadingRole || cleaned, Math.max(10, 24 - prefix.length));
   return `${prefix}${title}`;
 }

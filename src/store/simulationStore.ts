@@ -18,7 +18,6 @@ interface SimulationStore {
   bumpCompleted:(id: AgentRole) => void;
 
   addTask:    (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => SimTask;
-  addLocalTask: (t: Omit<SimTask, 'id' | 'createdAt' | 'updatedAt'>) => SimTask;
   updateTask: (id: string, patch: Partial<SimTask>) => void;
 
   addEvent: (e: Omit<SimEvent, 'id' | 'timestamp'>) => void;
@@ -57,9 +56,6 @@ const INITIAL_STATE = () => ({
   isRunning: false,
 });
 
-// Keep a bounded local history; EventLog alone applies the requested 200-row render limit.
-const MAX_LOCAL_EVENTS = 1000;
-
 export const useSimStore = create<SimulationStore>((set, get) => ({
   ...INITIAL_STATE(),
 
@@ -93,16 +89,16 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
   },
 
   addTask: (t) => {
-    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now(), sessionId: t.sessionId ?? getSessionId() };
+    const newTask: SimTask = {
+      ...t,
+      id: uuid(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      sessionId: t.sessionId ?? getSessionId(),
+      source: t.source ?? 'simulation',
+    };
     set(s => ({ tasks: [...s.tasks, newTask] }));
-    void upsertTask(newTask);
-    return newTask;
-  },
-
-  // Debug findings must never be persisted or broadcast.
-  addLocalTask: (t) => {
-    const newTask: SimTask = { ...t, id: uuid(), createdAt: Date.now(), updatedAt: Date.now(), sessionId: t.sessionId ?? getSessionId(), localOnly: true };
-    set(s => ({ tasks: [...s.tasks, newTask] }));
+    if (!newTask.localOnly) void upsertTask(newTask);
     return newTask;
   },
 
@@ -119,7 +115,7 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
       events: [
         { ...e, id: uid(), timestamp: Date.now(), sessionId: e.sessionId ?? getSessionId() },
         ...s.events,
-      ].slice(0, MAX_LOCAL_EVENTS),
+      ],
     })),
 
   setRunning: (isRunning) => set({ isRunning }),
@@ -160,9 +156,10 @@ export const useSimStore = create<SimulationStore>((set, get) => ({
         assignedTo:  row.assigned_to as AgentRole | null,
         status:      row.status   as TaskStatus,
         priority:    row.priority as TaskPriority,
-        createdAt:   Date.parse(row.created_at) || Date.now(),
-        updatedAt:   Date.parse(row.updated_at) || Date.now(),
+        createdAt:   Date.now(),
+        updatedAt:   Date.now(),
         sessionId:   row.session_id,
+        source:      row.description.includes('[planner-generated]') ? 'planner-generated' : 'simulation',
       };
       if (exists) {
         return { tasks: s.tasks.map(t => t.id === row.id ? { ...t, ...mapped } : t) };

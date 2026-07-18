@@ -37,10 +37,10 @@ export default function Page() {
           <TaskQueue />
           <AgentStatus />
           <WorkflowGraph />
-          <DebugPanel />
         </div>
 
       </div>
+      <DebugPanel />
     </div>
   );
 }

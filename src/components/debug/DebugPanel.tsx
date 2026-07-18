@@ -36,16 +36,15 @@ function getTraceClass(value: boolean | null): string {
 }
 
 export default function DebugPanel() {
-  // Keep the primary task workflow visible on common 1024×768 operator screens.
   const [collapsed, setCollapsed] = useState(true);
   const supabaseStatus = useDebugStore(s => s.supabaseStatus);
-  const planner = useDebugStore(s => s.planner);
+  const latest = useDebugStore(s => s.latest);
   const supabaseMeta = SUPABASE_META[supabaseStatus];
 
   return (
     <section className={`debug-panel${collapsed ? ' debug-panel--collapsed' : ''}`}>
       <div className="debug-panel-header">
-        <span>DEBUG PANEL</span>
+        <span>◈ DEBUG PANEL + TRACE LENS</span>
         <button
           className="panel-collapse-btn"
           type="button"
@@ -56,49 +55,47 @@ export default function DebugPanel() {
         </button>
       </div>
 
-      {!collapsed && (
-        <div className="debug-panel-body">
+      <div className="debug-panel-body" hidden={collapsed}>
           <div className="debug-row">
             <span>Supabase</span>
             <strong style={{ color: supabaseMeta.color }}>{supabaseMeta.label}</strong>
           </div>
           <div className="debug-row">
             <span>LLM provider</span>
-            <strong className={getProviderClass(planner.provider)}>
-              {planner.provider ? `${planner.role ?? 'agent'} · ${planner.provider}` : '—'}
+            <strong className={getProviderClass(latest.provider)}>
+              {latest.provider ?? '—'}{latest.role ? ` · ${latest.role}` : ''}
             </strong>
           </div>
           <div className="debug-row">
-            <span>Last LLM call</span>
-            <strong>{planner.lastPlanAt ? formatKstTime(planner.lastPlanAt) : '—'}</strong>
+            <span>Last Ask</span>
+            <strong>{latest.lastCallAt ? `${formatKstTime(latest.lastCallAt)} KST` : '—'}</strong>
           </div>
           <div className="debug-row">
             <span>traceRecorded</span>
-            <strong className={getTraceClass(planner.traceRecorded)}>
-              {formatTraceRecorded(planner.traceRecorded)}
+            <strong className={getTraceClass(latest.traceRecorded)}>
+              {formatTraceRecorded(latest.traceRecorded)}
             </strong>
           </div>
           <div className="debug-row debug-row-wide">
             <span>last model</span>
-            <strong>{planner.model ?? '—'}</strong>
+            <strong>{latest.model ?? '—'}</strong>
           </div>
           <div className="debug-metrics">
             <div>
               <span>latency_ms</span>
-              <strong>{formatNullableNumber(planner.latencyMs, 'ms')}</strong>
+              <strong>{formatNullableNumber(latest.latencyMs, 'ms')}</strong>
             </div>
             <div>
               <span>input_tokens</span>
-              <strong>{formatNullableNumber(planner.inputTokens)}</strong>
+              <strong>{formatNullableNumber(latest.inputTokens)}</strong>
             </div>
             <div>
               <span>output_tokens</span>
-              <strong>{formatNullableNumber(planner.outputTokens)}</strong>
+              <strong>{formatNullableNumber(latest.outputTokens)}</strong>
             </div>
           </div>
-          <AgentTraceViewer refreshKey={planner.lastPlanAt} />
-        </div>
-      )}
+          <AgentTraceViewer refreshKey={latest.lastCallAt} />
+      </div>
     </section>
   );
 }

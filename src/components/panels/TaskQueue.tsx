@@ -1,14 +1,15 @@
 'use client';
 
 import { useState } from 'react';
-import { useSimStore } from '@/store/simulationStore';
-import { useDebugStore } from '@/store/debugStore';
-import { useLensStore } from '@/store/lensStore';
+import HighlightText from '@/components/debug/HighlightText';
+import { filterTasks, hasActiveFilters } from '@/lib/debug/lens';
+import type { AgentApiResponse } from '@/lib/llm/types';
 import { eventBus } from '@/lib/simulation/eventBus';
 import { getSessionId } from '@/lib/supabase/session';
-import { matchesTask, titlesMatch } from '@/lib/debug/operationsLens';
-import LensHighlight from '@/components/debug/LensHighlight';
-import type { AgentRole, AgentStatus, TaskPriority, TaskStatus } from '@/types';
+import { useDebugStore } from '@/store/debugStore';
+import { useOperationsStore } from '@/store/operationsStore';
+import { useSimStore } from '@/store/simulationStore';
+import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 
 const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: string }> = {
   backlog:     { bg: '#1E293B', text: '#94A3B8', label: 'BACKLOG' },
@@ -18,237 +19,207 @@ const STATUS_STYLES: Record<TaskStatus, { bg: string; text: string; label: strin
 };
 
 const PRIORITY_COLORS: Record<TaskPriority, string> = {
-  high:   '#EF4444',
-  medium: '#F97316',
-  low:    '#94A3B8',
+  high: '#EF4444', medium: '#F97316', low: '#94A3B8',
 };
 
-const ROLE_EMOJIS: Record<string, string> = {
+const ROLE_EMOJIS: Record<AgentRole, string> = {
   planner: '📋', architect: '🏗️', developer: '💻', reviewer: '🔍', qa: '🧪',
 };
 
-function formatDescription(description: string): string {
-  const original = description.match(/(?:^|\n)Original:\s*(.+)/)?.[1]
-    ?? description.match(/original="([^"]+)"/)?.[1];
-  if (original) return original;
-  return description;
+type CallableRole = Exclude<AgentRole, 'planner'>;
+const CALLABLE_ROLES: CallableRole[] = ['architect', 'developer', 'reviewer', 'qa'];
+const WORK_STATUS: Record<CallableRole, AgentStatus> = {
+  architect: 'thinking', developer: 'coding', reviewer: 'reviewing', qa: 'testing',
+};
+const ROLE_LABEL: Record<CallableRole, string> = {
+  architect: 'Architect', developer: 'Developer', reviewer: 'Reviewer', qa: 'QA',
+};
+
+function displayDescription(description: string): string {
+  return description.replace(/^\[planner-generated\]\s*/i, '');
 }
 
-function formatList(value: unknown): string {
-  return Array.isArray(value)
-    ? value.filter(item => typeof item === 'string').slice(0, 4).join(' · ')
-    : '—';
+function abbreviateList(items: string[]): string {
+  return items.slice(0, 4).join(' · ') || '없음';
+}
+
+function taskIsPlannerGenerated(task: SimTask): boolean {
+  return task.source === 'planner-generated' || task.description.includes('[planner-generated]');
+}
+
+function completionStatus(result: AgentApiResponse): TaskStatus {
+  if (result.role === 'qa') return result.finalStatus === 'passed' ? 'done' : 'review';
+  if (result.role === 'reviewer') return result.approvalStatus === 'approved' ? 'done' : 'review';
+  return 'review';
+}
+
+/** Keep the event payload correlated while the text remains readable in the existing Event Log. */
+function logAgentResult(result: AgentApiResponse, taskTitle: string) {
+  const context = { task_title: taskTitle, taskTitle, provider: result.provider };
+  const emit = (message: string, extra: Record<string, unknown> = {}) => eventBus.emit('agent.message', {
+    agentId: result.role,
+    data: { ...context, ...extra, message },
+  });
+
+  switch (result.role) {
+    case 'architect':
+      emit(`설계 검토 완료: ${result.summary}`);
+      emit(`Architecture Notes: ${abbreviateList(result.architectureNotes)}`);
+      break;
+    case 'developer':
+      emit(`구현 계획 완료: ${result.summary}`);
+      emit(`수정 예상 파일: ${abbreviateList(result.filesToChange)}`);
+      emit(`테스트 계획: ${abbreviateList(result.testPlan)}`);
+      break;
+    case 'reviewer':
+      emit(`코드 리뷰 완료: ${result.summary}`);
+      emit(`수정 권장사항: ${abbreviateList(result.suggestedChanges)}`);
+      emit(`승인 상태: ${result.approvalStatus}`, { approvalStatus: result.approvalStatus });
+      break;
+    case 'qa':
+      emit(`테스트 계획 완료: ${result.summary}`);
+      emit(`테스트 케이스: ${abbreviateList(result.testCases)}`);
+      emit(`최종 검증 상태: ${result.finalStatus}`, { finalStatus: result.finalStatus });
+      break;
+    default:
+      break;
+  }
 }
 
 export default function TaskQueue() {
-  const tasks = useSimStore(s => s.tasks);
-  const [busyRole, setBusyRole] = useState<AgentRole | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
-  const addLocalTrace = useDebugStore(s => s.addLocalTrace);
-  const observedTraces = useDebugStore(s => s.observedTraces);
-  const highlightedTaskTitles = useDebugStore(s => s.highlightedTaskTitles);
-  const lens = useLensStore(s => s.filters);
-  const clearLens = useLensStore(s => s.clearAll);
-  const currentSession = getSessionId();
-  const visibleTasks = tasks.filter(task => matchesTask(task, lens, observedTraces, currentSession));
+  const tasks = useSimStore(state => state.tasks);
+  const filters = useOperationsStore(state => state.filters);
+  const traces = useOperationsStore(state => state.traces);
+  const selectedSessionId = useOperationsStore(state => state.selectedSessionId);
+  const highlightedTaskTitles = useOperationsStore(state => state.highlightedTaskTitles);
+  const clearFilters = useOperationsStore(state => state.clearFilters);
+  const readOnlyAnalysis = useOperationsStore(state => state.readOnlyAnalysis);
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
 
-  async function askAgent(role: Exclude<AgentRole, 'planner'>) {
-    if (busyRole) return;
-    const selectedTask = tasks.find(item => item.id === selectedTaskId && item.assignedTo === role);
-    const priorityScore: Record<TaskPriority, number> = { high: 3, medium: 2, low: 1 };
-    const task = selectedTask
-      ?? [...tasks].filter(item => item.assignedTo === role && item.status !== 'done')
-        .sort((a, b) => priorityScore[b.priority] - priorityScore[a.priority] || a.createdAt - b.createdAt)[0]
-      ?? tasks.find(item => item.status !== 'done')
-      ?? tasks[0];
-    const title = task?.title ?? `${role} 검토`;
-    const description = task?.description ?? '현재 MVP 작업을 검토합니다.';
-    const sessionId = getSessionId();
-    const previous = useSimStore.getState().agents[role];
+  const visibleTasks = filterTasks(tasks, traces, filters);
+  const grouped: Record<TaskStatus, SimTask[]> = {
+    in_progress: visibleTasks.filter(task => task.status === 'in_progress'),
+    review: visibleTasks.filter(task => task.status === 'review'),
+    backlog: visibleTasks.filter(task => task.status === 'backlog'),
+    done: visibleTasks.filter(task => task.status === 'done'),
+  };
+
+  async function askAgent(task: SimTask, role: CallableRole) {
+    if (busyTaskId || readOnlyAnalysis) return;
+    const store = useSimStore.getState();
+    const previous = store.agents[role];
     const previousStatus = previous.status;
     const previousTask = previous.currentTask;
-    const workStatus: Record<Exclude<AgentRole, 'planner'>, AgentStatus> = {
-      architect: 'thinking', developer: 'coding', reviewer: 'reviewing', qa: 'testing',
-    };
-    setBusyRole(role);
-    useSimStore.getState().setStatus(role, workStatus[role]);
-    useSimStore.getState().setTask(role, title);
-    useSimStore.getState().setSpeech(role, `${role} 분석 중...`);
+    const previousTaskStatus = task.status;
+    const activeTask = `Ask ${ROLE_LABEL[role]}: ${task.title}`;
+    const sessionId = getSessionId();
+    const callId = useDebugStore.getState().startAgentCall(role, task.title, sessionId);
+    const managedByPlannerWorkflow = taskIsPlannerGenerated(task);
+
+    setBusyTaskId(task.id);
+    store.setStatus(role, WORK_STATUS[role]);
+    store.setTask(role, activeTask);
+    store.setSpeech(role, `${ROLE_LABEL[role]} 검토 중: ${task.title}`.slice(0, 70));
+    if (!managedByPlannerWorkflow && task.status !== 'done') store.updateTask(task.id, { status: 'in_progress' });
+
     try {
       const response = await fetch(`/api/agents/${role}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskTitle: title, taskDescription: description, sessionId }),
+        body: JSON.stringify({ taskTitle: task.title, taskDescription: displayDescription(task.description), sessionId }),
       });
-      const result = await response.json() as Record<string, unknown>;
-      const provider = result.provider === 'claude' ? 'claude' : 'mock';
-      addLocalTrace({
-        id: `ask-${crypto.randomUUID()}`,
-        session_id: sessionId,
-        agent_id: role,
-        trace_type: 'tool_use',
-        input_tokens: null,
-        output_tokens: null,
-        latency_ms: typeof result.latencyMs === 'number' ? result.latencyMs : null,
-        model: typeof result.model === 'string' ? result.model : null,
-        metadata: {
-          action: 'ask_agent',
-          askAgent: true,
-          task_title: title,
-          provider,
-          traceRecorded: result.traceRecorded === true,
-          ...(typeof result.finalStatus === 'string' ? { finalStatus: result.finalStatus } : {}),
-          ...(typeof result.approvalStatus === 'string' ? { approvalStatus: result.approvalStatus } : {}),
-        },
-        created_at: new Date().toISOString(),
-      });
-      recordAgentResponse({
-        role,
-        sessionId,
-        taskTitle: title,
-        provider,
-        traceRecorded: result.traceRecorded === true,
-        model: typeof result.model === 'string' ? result.model : null,
-        latencyMs: typeof result.latencyMs === 'number' ? result.latencyMs : null,
-        inputTokens: typeof result.inputTokens === 'number' ? result.inputTokens : null,
-        outputTokens: typeof result.outputTokens === 'number' ? result.outputTokens : null,
-      });
-      const summary = typeof result.summary === 'string' ? result.summary : '응답 완료';
-      // eventBus supplies the single [Agent] prefix for display and Supabase events.
-      const lines: string[] = [`${role === 'architect' ? '설계 검토' : role === 'developer' ? '구현 계획' : role === 'reviewer' ? '코드 리뷰' : '테스트 계획'} 완료: ${summary}`];
-      if (role === 'architect') lines.push(`설계 노트: ${formatList(result.architectureNotes)}`);
-      if (role === 'developer') {
-        lines.push(`수정 예상 파일: ${formatList(result.filesToChange)}`);
-        lines.push(`테스트 계획: ${formatList(result.testPlan)}`);
+      const result = await response.json() as AgentApiResponse;
+      if (!response.ok || !result.ok || result.role !== role) throw new Error('invalid_response');
+
+      useDebugStore.getState().recordAgentResponse(callId, result);
+      logAgentResult(result, task.title);
+      if (!managedByPlannerWorkflow && previousTaskStatus !== 'done') {
+        store.updateTask(task.id, { status: completionStatus(result) });
       }
-      if (role === 'reviewer') {
-        lines.push(`수정 권장사항: ${formatList(result.suggestedChanges)}`);
-        lines.push(`승인 상태: ${String(result.approvalStatus ?? 'needs_more_info')}`);
-      }
-      if (role === 'qa') {
-        lines.push(`테스트 케이스: ${formatList(result.testCases)}`);
-        lines.push(`최종 검증 상태: ${String(result.finalStatus ?? 'needs_more_testing')}`);
-      }
-      lines.forEach(message => eventBus.emit('agent.message', { agentId: role, data: { message } }));
-      useSimStore.getState().setSpeech(role, summary.slice(0, 70));
+      const speech = `${result.provider === 'claude' ? 'Claude' : 'Mock'}: ${result.summary}`.slice(0, 72);
+      store.setSpeech(role, speech);
+      useOperationsStore.getState().refreshContext();
+      window.setTimeout(() => {
+        if (useSimStore.getState().agents[role].speech === speech) useSimStore.getState().setSpeech(role, null);
+      }, 4500);
     } catch {
-      recordAgentResponse({ role, sessionId, taskTitle: title, provider: 'mock', traceRecorded: false });
-      addLocalTrace({
-        id: `ask-${crypto.randomUUID()}`,
-        session_id: sessionId,
-        agent_id: role,
-        trace_type: 'tool_use',
-        input_tokens: null,
-        output_tokens: null,
-        latency_ms: null,
-        model: null,
-        metadata: { action: 'ask_agent', askAgent: true, task_title: title, traceRecorded: false },
-        created_at: new Date().toISOString(),
+      useDebugStore.getState().recordAgentFailure(callId);
+      if (!managedByPlannerWorkflow) store.updateTask(task.id, { status: previousTaskStatus });
+      eventBus.emit('agent.message', {
+        agentId: role,
+        data: { message: `${ROLE_LABEL[role]} 호출 실패. Mock simulation은 계속 동작합니다.`, task_title: task.title },
       });
-      eventBus.emit('agent.message', { agentId: role, data: { message: 'API 실패 · mock simulation 유지' } });
-      useSimStore.getState().setSpeech(role, '호출 실패 · mock simulation 유지');
+      store.setSpeech(role, '호출 실패. Mock simulation 유지');
     } finally {
-      useSimStore.getState().setStatus(role, previousStatus);
-      useSimStore.getState().setTask(role, previousTask);
-      setBusyRole(null);
+      const current = useSimStore.getState().agents[role];
+      if (current.currentTask === activeTask) {
+        store.setStatus(role, previousStatus);
+        store.setTask(role, previousTask);
+      }
+      setBusyTaskId(null);
     }
   }
-
-  const grouped: Record<TaskStatus, typeof tasks> = {
-    in_progress: visibleTasks.filter(t => t.status === 'in_progress'),
-    review:      visibleTasks.filter(t => t.status === 'review'),
-    backlog:     visibleTasks.filter(t => t.status === 'backlog'),
-    done:        visibleTasks.filter(t => t.status === 'done'),
-  };
 
   return (
     <div className="panel task-queue-panel">
       <div className="panel-header">
         <span>📋 TASK QUEUE</span>
-        <span><button type="button" onClick={clearLens} className="panel-collapse-btn">CLEAR ALL</button> <span className="panel-badge">{visibleTasks.length}/{tasks.length}</span></span>
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3, padding: '4px 6px', borderBottom: '1px solid #1e293b' }}>
-        {([
-          ['architect', 'Ask Architect'],
-          ['developer', 'Ask Developer'],
-          ['reviewer', 'Ask Reviewer'],
-          ['qa', 'Ask QA'],
-        ] as const).map(([role, label]) => (
-          <button key={role} type="button" disabled={busyRole !== null}
-            onClick={() => void askAgent(role)}
-            style={{ fontSize: 9, padding: '4px', color: '#93c5fd', background: '#061122', border: '1px solid #2563eb', cursor: 'pointer' }}>
-            {busyRole === role ? 'Working...' : label}
-          </button>
-        ))}
-      </div>
-      <div style={{ fontSize: 8, color: '#64748b', padding: '3px 7px', borderBottom: '1px solid #1e293b' }}>
-        {selectedTaskId && tasks.some(task => task.id === selectedTaskId)
-          ? '선택 task를 해당 Ask Agent 버튼으로 검토 · 다시 클릭해 해제'
-          : 'task를 선택하면 해당 역할의 Ask Agent에 전달됩니다'}
+        <div className="panel-header-tools">
+          <span className="panel-badge" title="filtered / total">{visibleTasks.length}/{tasks.length}</span>
+          <button type="button" className="panel-clear-btn" onClick={clearFilters} disabled={!hasActiveFilters(filters)}>CLEAR ALL</button>
+        </div>
       </div>
 
-      <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {visibleTasks.length === 0 && <span style={{ color: '#64748b', fontSize: 10 }}>No tasks match · use Clear all</span>}
+      <div className="panel-body task-queue-body">
+        {visibleTasks.length === 0 && (
+          <div className="lens-empty">{tasks.length ? 'No tasks match Operations Lens.' : 'No tasks yet. Add a task or plan a sprint.'}</div>
+        )}
         {(['in_progress', 'review', 'backlog', 'done'] as TaskStatus[]).map(status => {
           const group = grouped[status];
-          if (group.length === 0) return null;
+          if (!group.length) return null;
           const style = STATUS_STYLES[status];
           return (
             <div key={status}>
-              <div style={{ fontSize: 9, color: '#475569', fontFamily: 'monospace', marginBottom: 3, letterSpacing: 1 }}>
-                — {style.label} ({group.length}) —
-              </div>
-              {group.map(task => (
-                <div
-                  key={task.id}
-                  role="button"
-                  tabIndex={0}
-                  aria-pressed={selectedTaskId === task.id}
-                  onClick={() => setSelectedTaskId(value => value === task.id ? null : task.id)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setSelectedTaskId(value => value === task.id ? null : task.id);
-                    }
-                  }}
-                  style={{
-                    background: style.bg,
-                    border: `1px solid ${style.text}33`,
-                    borderLeft: `3px solid ${style.text}`,
-                    borderRadius: 3,
-                    padding: '5px 8px',
-                    marginBottom: 3,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                    cursor: 'pointer',
-                    boxShadow: highlightedTaskTitles.some(title => titlesMatch(task.title, title))
-                      ? '0 0 0 2px #FBBF24, 0 0 12px #FBBF2466'
-                      : selectedTaskId === task.id ? '0 0 0 1px #67E8F9' : undefined,
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{ fontSize: 10, color: style.text, fontFamily: 'monospace', fontWeight: 'bold', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
-                      <LensHighlight text={task.title} keyword={lens.keyword} />
-                      {task.localOnly && <span style={{ color: '#FBBF24', fontSize: 8 }}> · LOCAL</span>}
-                    </span>
-                    <span style={{ fontSize: 8, color: PRIORITY_COLORS[task.priority], fontFamily: 'monospace', flexShrink: 0 }}>
-                      {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6 }}>
-                    <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', lineHeight: 1.25, overflowWrap: 'anywhere' }}>
-                      <LensHighlight text={formatDescription(task.description)} keyword={lens.keyword} />
-                    </span>
-                    {task.assignedTo && (
-                      <span style={{ fontSize: 9, color: '#64748B', fontFamily: 'monospace', flexShrink: 0 }}>
-                        {ROLE_EMOJIS[task.assignedTo]} {task.assignedTo}
+              <div className="task-group-label">— {style.label} ({group.length}) —</div>
+              {group.map(task => {
+                const role = task.assignedTo;
+                const callable = role && CALLABLE_ROLES.includes(role as CallableRole) ? role as CallableRole : null;
+                const title = task.title.toLowerCase();
+                const emphasized = Boolean(selectedSessionId
+                  && (!task.sessionId || task.sessionId === selectedSessionId)
+                  && highlightedTaskTitles.some(value => {
+                    const match = value.toLowerCase();
+                    return match && (title === match || title.includes(match) || match.includes(title));
+                  }));
+                return (
+                  <article
+                    key={task.id}
+                    className={`task-card${emphasized ? ' task-card--correlated' : ''}${task.localOnly ? ' task-card--local' : ''}`}
+                    style={{ background: style.bg, borderColor: `${style.text}33`, borderLeftColor: style.text }}
+                  >
+                    <div className="task-card-top">
+                      <strong style={{ color: style.text }}><HighlightText text={task.title} query={filters.keyword} /></strong>
+                      <span style={{ color: PRIORITY_COLORS[task.priority] }} title={task.priority}>
+                        {'●'.repeat(task.priority === 'high' ? 3 : task.priority === 'medium' ? 2 : 1)}
                       </span>
-                    )}
-                  </div>
-                </div>
-              ))}
+                    </div>
+                    <p className="task-description"><HighlightText text={displayDescription(task.description)} query={filters.keyword} /></p>
+                    <div className="task-card-footer">
+                      <span>{role ? `${ROLE_EMOJIS[role]} ${role}` : 'unassigned'}{task.localOnly ? ' · LOCAL' : ''}</span>
+                      {callable && (
+                        <button
+                          type="button"
+                          className={`ask-agent-btn ask-agent-btn--${callable}`}
+                          onClick={() => { void askAgent(task, callable); }}
+                          disabled={Boolean(busyTaskId) || readOnlyAnalysis}
+                        >
+                          {busyTaskId === task.id ? 'ASKING…' : `ASK ${ROLE_LABEL[callable].toUpperCase()}`}
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           );
         })}

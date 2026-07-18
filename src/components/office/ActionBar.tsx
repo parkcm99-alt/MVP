@@ -8,8 +8,9 @@ import { simulationEngine } from '@/lib/simulation/engine';
 import { DESK_STAND } from '@/lib/simulation/config';
 import { getSessionId } from '@/lib/supabase/session';
 import { insertAgentTrace } from '@/lib/supabase/traces';
+import { clearLocalTraces } from '@/lib/debug/localTraces';
 import { useDebugStore } from '@/store/debugStore';
-import { useOperationsLens } from '@/store/operationsLensStore';
+import { useOperationsStore } from '@/store/operationsStore';
 import type { AgentRole, AgentStatus, SimTask, TaskPriority, TaskStatus } from '@/types';
 import type { PlannerAgentResponse } from '@/lib/llm/types';
 
@@ -50,30 +51,6 @@ const STATUS_SCORE: Record<TaskStatus, number> = {
 
 const PLANNER_GENERATED_MARKER = '[planner-generated]';
 type BrowserTimer = number;
-
-function recordWorkflowTrace(
-  agentId: AgentRole,
-  traceType: 'handoff' | 'decision',
-  metadata: Record<string, unknown>,
-) {
-  const sessionId = getSessionId();
-  void insertAgentTrace({ sessionId, agentId, traceType, metadata }).then(recorded => {
-    if (recorded) return;
-    // Local fallback keeps correlation usable without Supabase and is never persisted later.
-    useDebugStore.getState().addLocalTrace({
-      id: `local-${traceType}-${crypto.randomUUID()}`,
-      session_id: sessionId,
-      agent_id: agentId,
-      trace_type: traceType,
-      input_tokens: null,
-      output_tokens: null,
-      latency_ms: null,
-      model: 'local',
-      metadata,
-      created_at: new Date().toISOString(),
-    });
-  });
-}
 
 const PLANNER_WORK_STATUS: Record<AgentRole, AgentStatus> = {
   planner: 'thinking',
@@ -120,6 +97,7 @@ function createTasksFromPlannerSteps(
   sourcePriority: TaskPriority,
   steps: string[],
   generatedFingerprints: Set<string>,
+  sessionId: string,
 ): SimTask[] {
   if (generatedFingerprints.has(responseFingerprint)) return [];
 
@@ -135,19 +113,27 @@ function createTasksFromPlannerSteps(
     assignPlannerStep(step).map(spec =>
       store.addTask({
         title: spec.title,
-        description: `${PLANNER_GENERATED_MARKER}\nSource: ${sourceTaskTitle}\nResponse: ${responseFingerprint.slice(0, 12)} · Step ${index + 1}\nOriginal: ${spec.originalStep}`,
+        description: `${PLANNER_GENERATED_MARKER} ${spec.originalStep}`,
         assignedTo: spec.assignedTo,
         status: 'backlog',
         priority: sourcePriority,
+        sessionId,
+        source: 'planner-generated',
+        metadata: { sourceTaskTitle, responseFingerprint: responseFingerprint.slice(0, 80), step: index + 1, originalStep: spec.originalStep },
       }),
     ),
   );
 
   createdTasks.forEach(task => {
-    recordWorkflowTrace('planner', 'handoff', {
-      source_agent: 'planner',
-      target_agent: task.assignedTo ?? 'planner',
-      task_title: task.title,
+    void insertAgentTrace({
+      sessionId,
+      agentId: 'planner',
+      traceType: 'handoff',
+      metadata: {
+        source_agent: 'planner',
+        target_agent: task.assignedTo ?? 'planner',
+        task_title: task.title,
+      },
     });
   });
 
@@ -158,6 +144,7 @@ function createTasksFromPlannerSteps(
 function schedulePlannerGeneratedWorkflow(
   tasks: SimTask[],
   timers: MutableRefObject<BrowserTimer[]>,
+  sessionId: string,
 ) {
   tasks.forEach((task, index) => {
     const agentId = task.assignedTo ?? 'planner';
@@ -192,10 +179,15 @@ function schedulePlannerGeneratedWorkflow(
         agentId,
         data: { task: task.title, taskId: task.id, source: 'planner-generated' },
       });
-      recordWorkflowTrace(agentId, 'decision', {
-        task_title: task.title,
-        status: 'in_progress',
-        assigned_to: agentId,
+      void insertAgentTrace({
+        sessionId,
+        agentId,
+        traceType: 'decision',
+        metadata: {
+          task_title: task.title,
+          status: 'in_progress',
+          assigned_to: agentId,
+        },
       });
       store.updateTask(task.id, { status: 'in_progress' });
     }, startDelay));
@@ -240,9 +232,11 @@ function schedulePlannerGeneratedWorkflow(
 export default function ActionBar() {
   const isRunning = useSimStore(s => s.isRunning);
   const tasks = useSimStore(s => s.tasks);
+  const readOnlyAnalysis = useOperationsStore(s => s.readOnlyAnalysis);
   const [plannerBusy, setPlannerBusy] = useState(false);
+  const startAgentCall = useDebugStore(s => s.startAgentCall);
   const recordAgentResponse = useDebugStore(s => s.recordAgentResponse);
-  const addLocalTrace = useDebugStore(s => s.addLocalTrace);
+  const recordAgentFailure = useDebugStore(s => s.recordAgentFailure);
   const generatedPlannerResponses = useRef<Set<string>>(new Set());
   const plannerWorkflowTimers = useRef<BrowserTimer[]>([]);
 
@@ -252,8 +246,7 @@ export default function ActionBar() {
   }, []);
 
   async function askPlanner() {
-    useOperationsLens.getState().clearAll();
-    if (plannerBusy) return;
+    if (plannerBusy || readOnlyAnalysis) return;
 
     const task = pickHighestPriorityTask(tasks);
     const taskTitle = task?.title ?? '스프린트 계획 점검';
@@ -269,6 +262,7 @@ export default function ActionBar() {
     useSimStore.getState().setTask('planner', planningTask);
     useSimStore.getState().setSpeech('planner', pendingSpeech);
     const sessionId = getSessionId();
+    const callId = startAgentCall('planner', taskTitle, sessionId);
 
     try {
       const response = await fetch('/api/agents/planner', {
@@ -277,35 +271,8 @@ export default function ActionBar() {
         body: JSON.stringify({ taskTitle, taskDescription, sessionId, session_id: sessionId }),
       });
       const result = await response.json() as PlannerAgentResponse;
-      addLocalTrace({
-        id: `ask-${crypto.randomUUID()}`,
-        session_id: sessionId,
-        agent_id: 'planner',
-        trace_type: 'tool_use',
-        input_tokens: null,
-        output_tokens: null,
-        latency_ms: result.latencyMs ?? null,
-        model: result.model ?? null,
-        metadata: {
-          action: 'ask_agent',
-          askAgent: true,
-          task_title: taskTitle,
-          provider: result.provider,
-          traceRecorded: result.traceRecorded ?? false,
-        },
-        created_at: new Date().toISOString(),
-      });
-      recordAgentResponse({
-        role: 'planner',
-        sessionId,
-        taskTitle,
-        provider: result.provider,
-        traceRecorded: result.traceRecorded ?? false,
-        model: result.model ?? null,
-        latencyMs: result.latencyMs ?? null,
-        inputTokens: result.inputTokens ?? null,
-        outputTokens: result.outputTokens ?? null,
-      });
+      if (!response.ok || result.role !== 'planner') throw new Error('invalid_response');
+      recordAgentResponse(callId, result);
       const providerLabel = result.provider === 'claude' ? 'Claude' : 'Mock Planner';
       const summary = result.summary || 'Planner 응답이 비어 있습니다.';
       const steps = Array.isArray(result.steps) ? result.steps : [];
@@ -318,10 +285,11 @@ export default function ActionBar() {
         sourcePriority,
         steps,
         generatedPlannerResponses.current,
+        sessionId,
       );
       const createdTaskCount = createdTasks.length;
 
-      schedulePlannerGeneratedWorkflow(createdTasks, plannerWorkflowTimers);
+      schedulePlannerGeneratedWorkflow(createdTasks, plannerWorkflowTimers, sessionId);
 
       eventBus.emit('agent.planning', {
         agentId: 'planner',
@@ -354,6 +322,7 @@ export default function ActionBar() {
       });
 
       useSimStore.getState().setSpeech('planner', speech);
+      useOperationsStore.getState().refreshContext();
       window.setTimeout(() => {
         if (useSimStore.getState().agents.planner.speech === speech) {
           useSimStore.getState().setSpeech('planner', null);
@@ -361,29 +330,7 @@ export default function ActionBar() {
       }, 4500);
     } catch {
       const speech = 'Planner 호출 실패. Mock simulation은 계속 동작합니다.';
-      addLocalTrace({
-        id: `ask-${crypto.randomUUID()}`,
-        session_id: sessionId,
-        agent_id: 'planner',
-        trace_type: 'tool_use',
-        input_tokens: null,
-        output_tokens: null,
-        latency_ms: null,
-        model: null,
-        metadata: { action: 'ask_agent', askAgent: true, task_title: taskTitle, traceRecorded: false },
-        created_at: new Date().toISOString(),
-      });
-      recordAgentResponse({
-        role: 'planner',
-        sessionId,
-        taskTitle,
-        provider: 'mock',
-        traceRecorded: false,
-        model: 'mock-fallback',
-        latencyMs: null,
-        inputTokens: null,
-        outputTokens: null,
-      });
+      recordAgentFailure(callId);
       eventBus.emit('agent.planning', {
         agentId: 'planner',
         data: {
@@ -413,6 +360,7 @@ export default function ActionBar() {
           onClick={() => simulationEngine.startSprint()}
           title="새 스프린트 시작"
           active={isRunning}
+          disabled={readOnlyAnalysis}
         >
           ▶ Start Sprint
         </ActionBtn>
@@ -420,6 +368,7 @@ export default function ActionBar() {
           variant="meeting"
           onClick={() => simulationEngine.callMeeting()}
           title="전체 미팅 소집"
+          disabled={readOnlyAnalysis}
         >
           💬 Call Meeting
         </ActionBtn>
@@ -427,6 +376,7 @@ export default function ActionBar() {
           variant="task"
           onClick={() => simulationEngine.createMockTask()}
           title="랜덤 태스크 추가"
+          disabled={readOnlyAnalysis}
         >
           + Add Task
         </ActionBtn>
@@ -434,7 +384,7 @@ export default function ActionBar() {
           variant="planner"
           onClick={() => { void askPlanner(); }}
           title="가장 우선순위 높은 태스크를 Planner Claude/mock으로 계획"
-          disabled={plannerBusy}
+          disabled={plannerBusy || readOnlyAnalysis}
         >
           {plannerBusy ? 'Planning...' : 'Plan with Claude'}
         </ActionBtn>
@@ -442,19 +392,27 @@ export default function ActionBar() {
           variant="complete"
           onClick={() => simulationEngine.completeSprint()}
           title="스프린트 즉시 완료"
+          disabled={readOnlyAnalysis}
         >
           ✓ Complete
         </ActionBtn>
         <ActionBtn
           variant="reset"
           onClick={() => {
-            useOperationsLens.getState().clearAll();
             plannerWorkflowTimers.current.forEach(window.clearTimeout);
             plannerWorkflowTimers.current = [];
             generatedPlannerResponses.current.clear();
             simulationEngine.resetOffice();
+            clearLocalTraces();
+            useDebugStore.getState().resetCalls();
+            const operations = useOperationsStore.getState();
+            operations.clearFilters();
+            operations.selectSession(null);
+            operations.setTraces([]);
+            operations.refreshContext();
           }}
           title="오피스 초기화"
+          disabled={readOnlyAnalysis}
         >
           ↺ Reset
         </ActionBtn>

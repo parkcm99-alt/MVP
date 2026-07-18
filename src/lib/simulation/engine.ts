@@ -6,6 +6,8 @@ import { DESK_STAND, MEETING_SEATS } from './config';
 import { eventBus } from './eventBus';
 
 type Store = ReturnType<typeof useSimStore.getState>;
+const isPlannerGenerated = (task: { source?: string; description: string }) =>
+  task.source === 'planner-generated' || task.description.includes('[planner-generated]');
 
 // ─── role → specific work status ──────────────────────────────────────────────
 
@@ -71,7 +73,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
   at(0, () => {
     store().addEvent({ agentId: 'planner', agentName: 'System', agentColor: '#64748B', type: 'system', message: '🏢 새 스프린트가 시작되었습니다' });
     store().tasks.forEach(t => {
-      if (t.status === 'done') store().updateTask(t.id, { status: 'backlog' });
+      if (!isPlannerGenerated(t) && t.status === 'done') store().updateTask(t.id, { status: 'backlog' });
     });
   });
   at(400,  () => workAt('planner',   '요구사항 분석',       '요구사항 분석 중... 📋'));
@@ -109,6 +111,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
     store().setStatus('planner',   WORK_STATUS.planner);
     store().setStatus('architect', WORK_STATUS.architect);
     store().tasks.forEach(t => {
+      if (isPlannerGenerated(t)) return;
       if (t.assignedTo === 'planner'   && t.status === 'backlog') store().updateTask(t.id, { status: 'in_progress' });
       if (t.assignedTo === 'architect' && t.status === 'backlog') store().updateTask(t.id, { status: 'in_progress' });
     });
@@ -119,7 +122,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
     speak('developer', '기능 구현 완료! PR 올릴게요 🚀');
     log('developer', 'task', '[Developer] PR #42 오픈');
     store().tasks.forEach(t => {
-      if (t.assignedTo === 'developer' && t.status === 'in_progress') store().updateTask(t.id, { status: 'review' });
+      if (!isPlannerGenerated(t) && t.assignedTo === 'developer' && t.status === 'in_progress') store().updateTask(t.id, { status: 'review' });
     });
     eventBus.emit('task.completed', { agentId: 'developer', data: { task: 'PR #42' } });
   });
@@ -170,7 +173,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
     speak('reviewer', 'LGTM! 코멘트 2개 남겼어요 ✅');
     log('reviewer', 'review', '[Reviewer] PR #42 리뷰 완료 — LGTM');
     store().tasks.forEach(t => {
-      if (t.assignedTo === 'developer' && t.status === 'review') store().updateTask(t.id, { status: 'done' });
+      if (!isPlannerGenerated(t) && t.assignedTo === 'developer' && t.status === 'review') store().updateTask(t.id, { status: 'done' });
     });
     store().bumpCompleted('developer');
     eventBus.emit('task.completed', { agentId: 'reviewer', data: { task: 'PR #42 Review' } });
@@ -195,7 +198,7 @@ function buildTimeline(): { steps: Step[]; duration: number } {
   at(41000, () => {
     speak('qa', '모든 테스트 통과! 🧪✅');
     store().tasks.forEach(t => {
-      if (t.status === 'in_progress') store().updateTask(t.id, { status: 'done' });
+      if (!isPlannerGenerated(t) && t.status === 'in_progress') store().updateTask(t.id, { status: 'done' });
     });
     store().bumpCompleted('qa');
     store().bumpCompleted('planner');
@@ -321,7 +324,7 @@ export class SimulationEngine {
       speak('planner', '스프린트 완료! 🎉');
       log('planner', 'system', '🎉 스프린트 강제 완료');
       store().tasks.forEach(task => {
-        if (task.status !== 'done') store().updateTask(task.id, { status: 'done' });
+        if (!isPlannerGenerated(task) && task.status !== 'done') store().updateTask(task.id, { status: 'done' });
       });
       roles.forEach((id, i) => walkTo(id, MEETING_SEATS[i]));
     });
