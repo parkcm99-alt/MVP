@@ -1,0 +1,116 @@
+export type AgentRole = 'planner' | 'architect' | 'developer' | 'reviewer' | 'qa';
+
+export type AgentStatus =
+  | 'idle'
+  | 'walking'
+  | 'thinking'
+  | 'coding'
+  | 'reviewing'
+  | 'testing'
+  | 'meeting'
+  | 'blocked';
+
+export type TaskStatus   = 'backlog' | 'in_progress' | 'review' | 'done';
+export type TaskPriority = 'low' | 'medium' | 'high';
+export type EventType    = 'task' | 'meeting' | 'chat' | 'system' | 'review' | 'planning';
+
+/** Typed event bus events (mock layer — see eventBus.ts) */
+export type BusEventType =
+  | 'task.created'
+  | 'agent.assigned'
+  | 'agent.moved'
+  | 'agent.status.changed'
+  | 'agent.message'
+  | 'agent.planning'
+  | 'task.started'
+  | 'meeting.started'
+  | 'task.completed'
+  | 'issue.found';
+
+/** Event bus payload — shared between eventBus and RealtimeAdapter */
+export interface BusPayload {
+  agentId: AgentRole;
+  data?:   Record<string, unknown>;
+}
+
+export interface Position {
+  x: number;
+  y: number;
+}
+
+export interface Agent {
+  id: AgentRole;
+  name: string;
+  role: AgentRole;
+  emoji: string;
+  primaryColor: string;
+  spriteColor: string;
+  pantColor: string;
+  deskPosition: Position;
+  position: Position;
+  status: AgentStatus;
+  currentTask: string | null;
+  speech: string | null;
+  completedTasks: number;
+}
+
+export interface SimTask {
+  id: string;
+  title: string;
+  description: string;
+  assignedTo: AgentRole | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  createdAt: number;
+  updatedAt: number;
+  /** In-memory correlation fields; the existing Supabase schema is unchanged. */
+  sessionId?: string;
+  source?: 'simulation' | 'planner-generated' | 'debug-finding';
+  localOnly?: boolean;
+}
+
+export interface SimEvent {
+  id: string;
+  timestamp: number;
+  agentId: AgentRole;
+  agentName: string;
+  agentColor: string;
+  type: EventType;
+  message: string;
+  /** Optional local correlation context; never changes the events table shape. */
+  sessionId?: string;
+  metadata?: Record<string, unknown> | null;
+  localOnly?: boolean;
+}
+
+// ──────────────────────────────────────────────
+// Future integration interfaces (not yet wired)
+// ──────────────────────────────────────────────
+
+/** Claude API message format (Anthropic SDK) */
+export interface LLMMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/** AgentOps event (to be sent via agentops SDK) */
+export interface AgentOpsEvent {
+  agentId: AgentRole;
+  eventName: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
+/** Supabase Realtime channel payload */
+export interface RealtimePayload {
+  type: 'agent_update' | 'task_update' | 'new_event';
+  data: unknown;
+}
+
+/** LangGraph / CrewAI node definition */
+export interface WorkflowNode {
+  id: string;
+  type: 'agent' | 'tool' | 'condition';
+  agentRole?: AgentRole;
+  label: string;
+}
