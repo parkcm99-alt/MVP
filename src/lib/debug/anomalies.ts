@@ -24,6 +24,11 @@ function signature(code: string, role: string, title = ''): string {
   return `${code}:${normalized(role)}:${normalized(safeTitle(title))}`;
 }
 
+function traceTime(trace: AgentTraceRow): number {
+  const value = Date.parse(trace.created_at);
+  return Number.isFinite(value) ? value : 0;
+}
+
 export function detectTraceAnomalies(traces: AgentTraceRow[], calls: AgentCallSnapshot[]): TraceAnomaly[] {
   const found = new Map<string, TraceAnomaly>();
   const add = (anomaly: TraceAnomaly) => { if (!found.has(anomaly.signature)) found.set(anomaly.signature, anomaly); };
@@ -49,7 +54,8 @@ export function detectTraceAnomalies(traces: AgentTraceRow[], calls: AgentCallSn
     const target = normalized(handoff.metadata?.target_agent);
     const hasDecision = traces.some(trace => trace.trace_type === 'decision'
       && normalized(trace.agent_id) === target
-      && normalized(traceTaskTitle(trace)) === normalized(title));
+      && normalized(traceTaskTitle(trace)) === normalized(title)
+      && traceTime(trace) >= traceTime(handoff));
     if (!hasDecision) add({
       code: 'handoff_without_decision',
       signature: signature('handoff_without_decision', target, title),
@@ -59,9 +65,15 @@ export function detectTraceAnomalies(traces: AgentTraceRow[], calls: AgentCallSn
   });
 
   calls.filter(call => call.completedAt).forEach(call => {
+    // Bound the match to this particular Ask invocation. An older trace for a
+    // repeated task title must not hide a missing llm_call on the newest call.
+    const earliest = call.startedAt - 5_000;
+    const latest = (call.completedAt ?? Date.now()) + 5_000;
     const hasLlm = traces.some(trace => trace.trace_type === 'llm_call'
       && trace.agent_id === call.role
-      && normalized(traceTaskTitle(trace)) === normalized(call.taskTitle));
+      && normalized(traceTaskTitle(trace)) === normalized(call.taskTitle)
+      && traceTime(trace) >= earliest
+      && traceTime(trace) <= latest);
     if (!hasLlm) add({
       code: 'ask_without_llm_call',
       signature: signature('ask_without_llm_call', call.role, call.taskTitle),

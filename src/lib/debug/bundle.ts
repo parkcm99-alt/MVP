@@ -5,6 +5,8 @@ import { sanitizeValue } from './sanitize';
 
 export const DEBUG_BUNDLE_VERSION = 1;
 export const MAX_BUNDLE_BYTES = 1_000_000;
+const AGENT_ROLES = new Set(['planner', 'architect', 'developer', 'reviewer', 'qa']);
+const TRACE_TYPES = new Set(['llm_call', 'tool_use', 'handoff', 'decision']);
 
 export interface DebugBundleAgent {
   id: string;
@@ -78,10 +80,10 @@ export function parseDebugBundle(raw: string): { bundle: DebugBundle | null; err
     || !validArray(value.agents, 10)) {
     return { bundle: null, error: 'Bundle data is incomplete or malformed.' };
   }
-  if (!value.traces.every(trace => typeof trace.id === 'string'
-    && typeof trace.session_id === 'string'
-    && typeof trace.agent_id === 'string'
-    && typeof trace.trace_type === 'string'
+  if (!value.traces.every(trace => typeof trace.id === 'string' && trace.id.length <= 200
+    && trace.session_id === value.sessionId
+    && AGENT_ROLES.has(String(trace.agent_id))
+    && TRACE_TYPES.has(String(trace.trace_type))
     && typeof trace.created_at === 'string' && !Number.isNaN(Date.parse(trace.created_at))
     && nullableNumber(trace.input_tokens) && nullableNumber(trace.output_tokens)
     && nullableNumber(trace.latency_ms) && nullableString(trace.model)

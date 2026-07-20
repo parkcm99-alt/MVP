@@ -19,6 +19,7 @@ interface InsertAgentTraceParams {
 }
 
 const MAX_SAFE_ERROR_BODY_LENGTH = 600;
+const TRACE_INSERT_TIMEOUT_MS = 5_000;
 let didWarnMissingServiceRole = false;
 
 function getSupabaseRestConfig(): { url?: string; key?: string } {
@@ -90,16 +91,24 @@ export async function insertAgentTrace({
       return false;
     }
 
-    const response = await fetch(`${url.replace(/\/$/, '')}/rest/v1/agent_traces`, {
-      method: 'POST',
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify(row),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), TRACE_INSERT_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${url.replace(/\/$/, '')}/rest/v1/agent_traces`, {
+        method: 'POST',
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(row),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       console.warn('[Supabase] agent_traces insert failed:', `http_${response.status}`, await getSafeErrorBody(response));
@@ -107,7 +116,10 @@ export async function insertAgentTrace({
     }
     return true;
   } catch (error) {
-    console.warn('[Supabase] agent_traces insert failed:', error instanceof Error ? redactText(error.message) : 'unknown_error');
+    const reason = error instanceof Error && error.name === 'AbortError'
+      ? 'timeout'
+      : error instanceof Error ? redactText(error.message) : 'unknown_error';
+    console.warn('[Supabase] agent_traces insert failed:', reason);
     return false;
   }
 }

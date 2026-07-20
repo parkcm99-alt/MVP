@@ -220,8 +220,12 @@ export default function AgentTraceViewer({ refreshKey = null }: AgentTraceViewer
   ).slice(0, 8) : [];
   const anomalies = detectTraceAnomalies(sessionTraces, sessionCalls);
   const warnings = buildLensWarnings(activeTasks, activeEvents, activeTraces, filters);
-  const anomalySignature = anomalies.map(anomaly => anomaly.signature).sort().join('|');
-  const findingKey = selectedSessionId && anomalySignature ? `${selectedSessionId}:${anomalySignature}` : '';
+  // One focused finding per stable session/anomaly signature. A later,
+  // unrelated anomaly does not mutate this key and re-enable a duplicate.
+  const findingAnomaly = anomalies[0] ?? null;
+  const findingKey = selectedSessionId && findingAnomaly
+    ? `${selectedSessionId}:${findingAnomaly.signature}`
+    : '';
   const findingExists = Boolean(findingKey && (
     findingKeys.includes(findingKey)
     || liveTasks.some(task => task.source === 'debug-finding' && task.metadata?.findingKey === findingKey)
@@ -235,19 +239,26 @@ export default function AgentTraceViewer({ refreshKey = null }: AgentTraceViewer
 
   function createFinding() {
     if (imported || !selectedSessionId || !findingKey || findingExists) return;
-    const role: 'reviewer' | 'qa' = anomalies.some(anomaly =>
-      anomaly.code === 'failure_status' || anomaly.code === 'high_latency') ? 'qa' : 'reviewer';
+    if (!findingAnomaly) return;
+    const role: 'reviewer' | 'qa' =
+      findingAnomaly.code === 'failure_status' || findingAnomaly.code === 'high_latency'
+        ? 'qa'
+        : 'reviewer';
     const store = useSimStore.getState();
     const task = store.addTask({
       title: `[${role.toUpperCase()}] Debug finding`,
-      description: anomalies.map(anomaly => anomaly.summary).slice(0, 3).join(' '),
+      description: `${findingAnomaly.summary} Hint: ${findingAnomaly.hint}`,
       assignedTo: role,
       status: 'backlog',
       priority: 'high',
       sessionId: selectedSessionId,
       source: 'debug-finding',
       localOnly: true,
-      metadata: { findingKey, anomalySignature, anomalyCodes: anomalies.map(anomaly => anomaly.code) },
+      metadata: {
+        findingKey,
+        anomalySignature: findingAnomaly.signature,
+        anomalyCodes: [findingAnomaly.code],
+      },
     });
     const agent = store.agents[role];
     store.addEvent({
@@ -255,7 +266,7 @@ export default function AgentTraceViewer({ refreshKey = null }: AgentTraceViewer
       agentName: agent.name,
       agentColor: agent.primaryColor,
       type: 'review',
-      message: `[${agent.name}] Local debug finding 생성: ${shortSession(selectedSessionId)} (${anomalies.length} anomalies)`,
+      message: `[${agent.name}] Local debug finding 생성: ${shortSession(selectedSessionId)} (${findingAnomaly.code})`,
       sessionId: selectedSessionId,
       metadata: { task_title: task.title, local_only: true },
       localOnly: true,
