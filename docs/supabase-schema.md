@@ -128,6 +128,8 @@ create table public.agent_traces (
 
 create index agent_traces_session_id on public.agent_traces (session_id);
 create index agent_traces_agent_id   on public.agent_traces (agent_id);
+create index agent_traces_session_created_at
+  on public.agent_traces (session_id, created_at desc);
 ```
 
 ---
@@ -173,11 +175,13 @@ create policy "anon insert" on public.agent_traces for insert with check (true);
 
 ## 연결 체크리스트
 
-- [x] Supabase 프로젝트 생성
-- [x] `.env.local`에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 설정
-- [x] SQL Editor에서 위 스키마 실행
+아래 항목은 배포 환경에서 직접 확인해야 합니다. 저장소의 체크 표시는 외부 상태 증명이 아닙니다.
+
+- [ ] Supabase 프로젝트와 대상 환경 확인
+- [ ] `.env.local` 또는 Vercel에 같은 프로젝트의 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` 설정
+- [ ] SQL Editor에서 위 스키마와 필요한 publication/RLS 정책 확인
 - [ ] `supabase gen types typescript --project-id <ref>` 로 `src/lib/supabase/types.ts` 재생성 (선택)
-- [x] `SupabaseRealtimeAdapter` 구현 완료 (자동 활성화)
+- [x] 코드: 세 테이블 Realtime 구독과 graceful fallback 구현
 
 ---
 
@@ -185,7 +189,5 @@ create policy "anon insert" on public.agent_traces for insert with check (true);
 
 | 채널명 | 목적 | 이벤트 |
 |--------|------|--------|
-| `sim-events-changes` | events 테이블 INSERT 구독 (중복 방지: session_id 필터) | postgres_changes INSERT |
+| `sim-multiplayer` | events INSERT 및 agents/tasks 변경 구독. 자기 session row는 로컬 중복 방지를 위해 제외 | postgres_changes |
 | `_conn_check` | 연결 상태 확인 전용 (ConnectionStatus 컴포넌트) | subscribe state |
-| `agent-state` (예정) | 에이전트 상태 실시간 동기화 | postgres_changes on agents |
-| `task-updates` (예정) | 태스크 변경 동기화 | postgres_changes on tasks |
